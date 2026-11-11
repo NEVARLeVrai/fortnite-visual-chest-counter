@@ -7,6 +7,8 @@ changes; the pull request links here. Versioned release notes describe published
 
 ## Changes
 
+- Show the verified replay count as confirmed in the Dashboard and personal overlay at the lobby. Keep the original live count in Compare replay and leave the next match’s counter independent.
+
 - Show synchronized chests, matches and Pirate Token odds above the Discord ranking. Count one result per
   player and match ID in the ranking, and retain older unlinked results. Add
   `/match` for paginated shared history and per-match summaries. Chest types remain available in `/chests`.

@@ -85,6 +85,11 @@ def reconcile_context(context, state):
     if same_match:
         total_delta = total - old["approximate"]
         certain_delta = certain - old["certain"]
+        if context.get("replay_verified") is True and (total_delta or certain_delta):
+            personal = _personal(state, boost=personal["boost"], active=context.get("active") is True)
+            team = None
+            context = {**context, "replay_verified": False}
+            total_delta = certain_delta = 0
         live_summaries = (personal, team) if context.get("current_saved") is True else (personal, team, cumulative)
         for summary in live_summaries:
             if summary is None:
@@ -94,7 +99,7 @@ def reconcile_context(context, state):
             summary["log_no_drop"] = min(0.0, summary["log_no_drop"] + total_delta * rate)
         if team is not None:
             own = personal["names"].strip().casefold()
-            team["member_totals"] = tuple((name, total if name.casefold() == own else count)
+            team["member_totals"] = tuple((name, personal["total"] if name.casefold() == own else count)
                                           for name, count in team["member_totals"])
         previous_matches = personal["matches"]
         personal["matches"] = max(previous_matches, int(total > 0 or context.get("active") is True))
@@ -115,6 +120,7 @@ def reconcile_context(context, state):
         cumulative["log_no_drop"] += personal["log_no_drop"]
         cumulative["matches"] += personal["matches"]
         team = None
+        context = {**context, "replay_verified": False}
     return {**context, "version": 1, "state": dict(state), "personal": personal, "team": team,
             "cumulative": cumulative, "current_saved": context.get("current_saved") is True and same_match,
             "active": context.get("active") is True}
@@ -161,7 +167,7 @@ def render_sections(display, context, *, styled=False):
         values["approx"] = settings.format_count(summary["total"] - summary["certain"], thousands)
         values["chance"] = match_stats.token_chance(summary["log_no_drop"])
         values.update(names=summary["names"], types=summary["types"])
-        if scope == "personal":
+        if scope == "personal" and not context.get("replay_verified"):
             current_types = _types_text(state, thousands)
             if current_types is not None:
                 values["types"] = current_types

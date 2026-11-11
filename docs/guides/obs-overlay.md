@@ -36,7 +36,7 @@ For example, an All matches heading can use the content below.
 Pirate Token · {chance}
 ```
 
-The Personal section shows your live counter. The Team section appears when a teammate has contributed to the same verified session. Its default template shows **Chests** first, followed by each member’s count and then the Pirate Token odds. The **Match history + live** section combines known matches and the current counter. The **Group leaderboard** uses results published to Discord. Use the preview to check the text before applying it. Applying the templates refreshes both the floating overlay and `chest_counter.txt`.
+The Personal section shows your live counter during the match. When the current saved match is verified at the lobby, the same lines show the replay’s confirmed count and chest types. The original live count remains in Compare replay. The Team section appears when a teammate has contributed to the same verified session. Its default template shows **Chests** first, followed by each member’s count and then the Pirate Token odds. The **Match history + live** section combines known matches and the current counter. The **Group leaderboard** uses results published to Discord. Use the preview to check the text before applying it. Applying the templates refreshes both the floating overlay and `chest_counter.txt`.
 
 Use `**…**` around any part of a template to make it bold in the floating overlay and preview. For example, `Chests · **{total}**` bolds only the number. Leave a blank line between statistics to add vertical space. OBS receives the same text and spacing as plain text.
 

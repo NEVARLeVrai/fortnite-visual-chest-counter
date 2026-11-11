@@ -206,7 +206,7 @@ def types_text(breakdown):
         return ""
     parts = [f"{chest_types.LABELS[k]} {fmt(breakdown[k]['approx'])}" for k in (*chest_types.KNOWN, chest_types.UNKNOWN)
              if k in breakdown and breakdown[k]["approx"]]
-    parts += [f"{k} {fmt(v['approx'])}" for k, v in breakdown.items()
+    parts += [f"{discord_group.GROUP_TYPE_LABELS.get(k, k)} {fmt(v['approx'])}" for k, v in breakdown.items()
               if k not in (*chest_types.KNOWN, chest_types.UNKNOWN, "unclassified") and v["approx"]]
     rest = breakdown.get("unclassified", {}).get("approx", 0)
     if rest:
@@ -1572,7 +1572,16 @@ class Dashboard(QWidget):
         self.screen_overlay_display = load_cfg()[0]["display"]
         self.refresh_screen_overlay()
 
-    def match_summaries(self):
+    def current_snapshot(self, cfg):
+        try:
+            profile = profiles.apply(cfg)
+            identity = f"{profile['id']}@{profile['created_at'] or ''}"
+            snapshot, _, _ = match_history.read_snapshot(identity, (Path(cfg["state"]["path"]),))
+        except (OSError, ValueError, C.UserError):
+            return ""
+        return snapshot
+
+    def match_summaries(self, snapshot=None, verified=None):
         cfg = load_cfg()[0]
         group = getattr(self.win, "group", None)
         sessions = {session.fingerprint: session for session in group._sessions} if group is not None else {}
@@ -1583,17 +1592,18 @@ class Dashboard(QWidget):
         certain, total = self.win.counts
         boost = self.token_boost.currentData()
         fingerprint = self.win._match_fingerprint
-        try:
-            profile = profiles.apply(cfg)
-            identity = f"{profile['id']}@{profile['created_at'] or ''}"
-            snapshot, _, _ = match_history.read_snapshot(identity, (Path(cfg["state"]["path"]),))
-        except (OSError, ValueError, C.UserError):
-            snapshot = ""
+        if snapshot is None:
+            snapshot = self.current_snapshot(cfg)
         matches = getattr(self, "saved_matches", ())
         if not fingerprint:
             fingerprint = next((match.session_fingerprint for match in matches if match.snapshot == snapshot
                                 and match.group_webhook_id == webhook_id), "")
-        current = match_stats.team(sessions.get(fingerprint), player, current=(certain, total, boost)) if sharing and fingerprint else None
+        current = None
+        if sharing and fingerprint:
+            if verified is not None:
+                current = match_stats.saved_team(verified, sessions, webhook_id)
+            else:
+                current = match_stats.team(sessions.get(fingerprint), player, current=(certain, total, boost))
         cumulative = match_stats.cumulative(matches, sessions, webhook_id, snapshot=snapshot, certain=certain,
                                            total=total, boost=boost, fingerprint=fingerprint, player=player, sharing=sharing, active=self.win._match_active)
         return current, cumulative
@@ -1607,8 +1617,18 @@ class Dashboard(QWidget):
             latest = {}
         certain, total = self.win.counts
         boost = self.token_boost.currentData()
-        personal = match_stats.personal(certain, total, boost)
-        team, cumulative = self.match_summaries()
+        snapshot = self.current_snapshot(cfg)
+        saved = next((match for match in getattr(self, "saved_matches", ()) if match.snapshot == snapshot), None)
+        verified = (saved if saved and saved.replay and not self.win._match_active
+                    and not self.win.workers_active() else None)
+        if verified is None:
+            personal = match_stats.personal(certain, total, boost)
+            breakdown = types_text(self.win.primary_types)
+        else:
+            boost = verified.boost
+            personal = match_stats.personal(verified.certain, verified.total, boost)
+            breakdown = types_text({kind: {"approx": count} for kind, count in verified.chest_types.items()}) or "no chests yet"
+        team, cumulative = self.match_summaries(snapshot, verified)
         def summary(value):
             if value is None:
                 return None
@@ -1616,18 +1636,13 @@ class Dashboard(QWidget):
                     "boost": boost, "matches": value.matches, "players": len(value.players),
                     "names": " · ".join(value.players), "types": "", "member_totals": value.member_totals}
         own = summary(personal)
-        own.update(players=1, names=cfg["app"]["group_player"], types=f"Chest types · {self.types.text()}")
-        try:
-            profile = profiles.apply(cfg)
-            identity = f"{profile['id']}@{profile['created_at'] or ''}"
-            snapshot, _, _ = match_history.read_snapshot(identity, (path,))
-        except (OSError, ValueError, C.UserError):
-            snapshot = ""
+        own.update(players=1, names=cfg["app"]["group_player"], types=f"Chest types · {breakdown}")
         return {"version": 1, "profile_path": str(path.resolve()),
                 "state": {"certain": certain, "approximate": total,
                           "session_started_at": latest.get("session_started_at")},
                 "personal": own, "team": summary(team), "cumulative": summary(cumulative),
-                "current_saved": any(match.snapshot == snapshot for match in getattr(self, "saved_matches", ())),
+                "current_saved": saved is not None,
+                "replay_verified": verified is not None,
                 "active": self.win._match_active}
 
     def screen_overlay_sections(self, display):
@@ -1663,6 +1678,16 @@ class Dashboard(QWidget):
         if self.screen_overlay_display is None:
             return
         context = self.overlay_context()
+        replay_verified = context["replay_verified"]
+        if replay_verified or getattr(self, "_showing_verified_counts", False):
+            personal = context["personal"]
+            self.certain.set_value(personal["certain"])
+            self.approx.set_value(personal["total"] - personal["certain"])
+            self.total.setText(fmt(personal["total"]))
+            self.token_chance = match_stats.token_chance(personal["log_no_drop"])
+            self.token_odds.setText(self.token_chance)
+            self.types.setText(personal["types"].removeprefix("Chest types · "))
+        self._showing_verified_counts = replay_verified
         sections = overlay_layout.render_sections(self.screen_overlay_display, context)
         styled = overlay_layout.render_sections(self.screen_overlay_display, context, styled=True)
         text = overlay_layout.format_text(self.screen_overlay_display, sections)
@@ -5059,7 +5084,6 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError, sqlite3.Error) as error:
             self.add_log({"type": "warn", "text": f"Replay kept on disk. {error}"})
         self.dashboard.set_recent_matches(match_history.read_history(self.match_history_path()))
-        self.dashboard.refresh_screen_overlay()
         if self.pages.currentWidget() is self.group:
             self.group.load()
 
