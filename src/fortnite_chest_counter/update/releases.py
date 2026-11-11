@@ -51,7 +51,7 @@ class ReleaseSource:
     total_timeout: float = 20.0            # seconds for one whole request, so a trickling server cannot hold it open
 
 
-GITHUB = ReleaseSource("https://api.github.com/repos/GabrielGzS/fortnite-visual-chest-counter/releases?per_page=30")
+GITHUB = ReleaseSource("https://api.github.com/repos/NEVARLeVrai/fortnite-visual-chest-counter/releases?per_page=30")
 
 
 @dataclass(frozen=True)

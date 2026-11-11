@@ -2,7 +2,7 @@
 
 First step for anything unclear: in the app open **Help & diagnostics** -> **Run diagnostics** -> **Copy report** (also
 saved to `logs\diagnostics.txt`). Include it, and any `logs\crash_*.txt`, when you
-[open an issue](https://github.com/GabrielGzS/fortnite-visual-chest-counter/issues).
+[open an issue](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/issues).
 
 Setup-specific problems: [dual-PC SRT](obs-dual-pc-srt.md#troubleshooting) · [capture card](capture-card.md#if-the-picture-is-black).
 

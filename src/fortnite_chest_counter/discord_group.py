@@ -38,7 +38,7 @@ _CLIENT_STAGGER = random.uniform(0.0, 2.0)
 GROUP_TYPE_LABELS = {**LABELS, "unclassified": "Not classified", "buried": "Buried chest", "poster": "Spirit poster chest"}
 _WEBHOOK_NAME = "Chest Counter"
 _WEBHOOK_AVATAR = ("https://raw.githubusercontent.com/NEVARLeVrai/fortnite-visual-chest-counter/"
-                   "ui/chest-tracker-dashboard/docs/previews/logo.png")
+                   "main/docs/previews/logo.png")
 
 
 _SCHEMA = """

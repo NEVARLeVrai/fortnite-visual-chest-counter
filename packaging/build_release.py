@@ -107,7 +107,7 @@ BEGIN
       VALUE "OriginalFilename", "{exe}"
       VALUE "ProductName", "{app}"
       VALUE "ProductVersion", "{version}"
-      VALUE "Comments", "Open source: https://github.com/GabrielGzS/fortnite-visual-chest-counter - not affiliated with Epic Games."
+      VALUE "Comments", "Open source: https://github.com/NEVARLeVrai/fortnite-visual-chest-counter - not affiliated with Epic Games."
     END
   END
   BLOCK "VarFileInfo"
@@ -211,7 +211,8 @@ def authenticode(paths):
     """{path: (status, signer)} via PowerShell Get-AuthenticodeSignature (reads signatures; runs nothing)."""
     script = ("$ErrorActionPreference='Stop'; foreach ($p in $input) { $s = Get-AuthenticodeSignature -LiteralPath $p; "
               "'{0}|{1}|{2}' -f $p, $s.Status, ($s.SignerCertificate.Subject -replace '^CN=([^,]+).*','$1') }")
-    out = subprocess.run(["powershell", "-NoProfile", "-Command", script], input="\n".join(map(str, paths)),
+    shell = shutil.which("pwsh") or "powershell"
+    out = subprocess.run([shell, "-NoProfile", "-Command", script], input="\n".join(map(str, paths)),
                          capture_output=True, text=True, check=True).stdout
     return {Path(p): (status, signer) for p, status, signer in (l.split("|", 2) for l in out.splitlines() if l.count("|") == 2)}
 

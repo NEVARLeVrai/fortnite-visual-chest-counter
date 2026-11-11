@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Fortnite Visual Chest Counter v0.2.3 — Setup guide</title>
+<title>Fortnite Visual Chest Counter v0.3.0 — Setup guide</title>
 <style>
 @font-face{font-family:GoogleSans;src:url('runtime/lib/fortnite_chest_counter/gui/assets/GoogleSans-400.ttf')}
 @font-face{font-family:GoogleSans;src:url('runtime/lib/fortnite_chest_counter/gui/assets/GoogleSans-700.ttf');font-weight:700}
@@ -12,7 +12,7 @@
 </style>
 </head>
 <body><main>
-<header><img src="runtime/lib/fortnite_chest_counter/gui/assets/icon_128.png" alt="Chest Counter logo"><div><h1>Fortnite Visual Chest Counter</h1><p>v0.2.3 public beta · Portable Windows setup guide.</p></div></header>
+<header><img src="runtime/lib/fortnite_chest_counter/gui/assets/icon_128.png" alt="Chest Counter logo"><div><h1>Fortnite Visual Chest Counter</h1><p>v0.3.0 public beta · Portable Windows setup guide.</p></div></header>
 <nav><a href="#start">Get started</a><a href="#counts">Counters</a><a href="#matches">Matches</a><a href="#overlay">Overlay</a><a href="#discord">Discord</a><a href="#diagnostics">Diagnostics</a><a href="#credits">Credits</a></nav>
 
 <h2 id="start">Get started</h2>
@@ -81,7 +81,7 @@
 <p>Session logs, rejected-candidate logs, popup snapshots and diagnostic recording are <b>off by default</b>. Enable them in Settings only when needed. Counts, saved state and OBS output continue updating with diagnostics off. Existing saved preferences are kept.</p>
 <p>Use <b>Help &amp; diagnostics → Run diagnostics</b>, then <b>Copy report</b> when reporting a problem. Enable diagnostic recording in Capture settings to keep footage around a miss. Press <b>Ctrl+Alt+M</b> to mark the moment and use <b>Review captures</b> to replay it.</p>
 <p><b>Clean logs and captures</b> removes generated diagnostics after counting stops. <b>Settings → Reset all</b> restores that page's defaults. Counts, profiles, history, overlay and Discord setup are kept.</p>
-<p>The app stores configuration, counter state and diagnostic files beside the executable. Close the app, extract the entire new ZIP into a new folder, then copy your own <code>state</code> folder and <code>config.toml</code> from the old installation. Discord credentials remain available on the same Windows account. Packaged builds can check for updates and offer a download limit.</p>
+<p>The app stores configuration, counter state and diagnostic files beside the executable. Close the app, extract the entire new ZIP into a new folder, then copy your own <code>state</code> folder and <code>config.toml</code> from the old installation. Discord credentials remain available on the same Windows account. This build checks <a href="https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/releases">the fork's releases</a> for newer packages signed by its trusted keys.</p>
 
 <h2 id="limits">Compatibility and data</h2>
 <p>HUD size, compression, occlusion and quick consecutive openings can affect counts. Chest-type detection has been exercised on English and French footage. Unsupported playlists and matches already underway may require manual tracking. The team total includes received submissions, so missing or delayed players can leave it incomplete.</p>

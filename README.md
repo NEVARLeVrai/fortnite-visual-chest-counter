@@ -2,10 +2,10 @@
   <img src="docs/previews/banner.png" alt="Fortnite Visual Chest Counter" width="1080">
   <p>Count your chests, follow the squad and keep the stats for every match.</p>
   <p>
-    <a href="https://github.com/GabrielGzS/fortnite-visual-chest-counter/releases"><img src="https://img.shields.io/badge/Windows-10%20%2F%2011-ffd2a1?style=flat&logo=windows&logoColor=1c1814" alt="Windows 10 and 11"></a>
+    <a href="https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/releases"><img src="https://img.shields.io/badge/Windows-10%20%2F%2011-ffd2a1?style=flat&logo=windows&logoColor=1c1814" alt="Windows 10 and 11"></a>
     <a href="docs/DEVELOPMENT.md"><img src="https://img.shields.io/badge/Python-3.13-c8b7a6?style=flat&logo=python&logoColor=1c1814" alt="Python 3.13 packaged runtime"></a>
     <a href="docs/CHANGES.md"><img src="https://img.shields.io/badge/Status-public%20beta-62ddb0?style=flat" alt="Public beta"></a>
-    <a href="https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/actions/workflows/tests.yml"><img src="https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/actions/workflows/tests.yml/badge.svg?branch=ui%2Fchest-tracker-dashboard" alt="Automated tests"></a>
+    <a href="https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/actions/workflows/tests.yml"><img src="https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/actions/workflows/tests.yml/badge.svg?branch=main" alt="Automated tests"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-f0bd70?style=flat" alt="MIT license"></a>
     <a href="docs/guides/matches-and-discord.md"><img src="https://img.shields.io/badge/Discord-group%20stats-5865f2?style=flat&logo=discord&logoColor=white" alt="Discord group statistics"></a>
     <a href="docs/guides/obs-overlay.md"><img src="https://img.shields.io/badge/OBS-overlay-c8b7a6?style=flat&logo=obsstudio&logoColor=1c1814" alt="OBS overlay support"></a>
@@ -15,11 +15,11 @@
 
 A portable Windows app that reads Fortnite's chest-opening pop-ups from gameplay video. Use a screen, livestream, OBS feed, capture card or recording, then show the results on screen and share them with your group.
 
-Current app version **v0.2.3 public beta**. The features below describe the current development branch. Published upstream packages have their own [release notes](https://github.com/GabrielGzS/fortnite-visual-chest-counter/releases).
+Current fork release **v0.3.0 public beta**. [Download for Windows](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/releases/tag/v0.3.0) or see the [release notes](docs/releases/RELEASE_NOTES_v0.3.0.md).
 
 ## Get started
 
-1. Get a portable build, or follow the [development guide](docs/DEVELOPMENT.md) to run this branch. Extract the whole ZIP and launch **Fortnite Visual Chest Counter.exe**. Portable builds include Python and the video tools.
+1. Get the [portable build](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/releases/tag/v0.3.0), or follow the [development guide](docs/DEVELOPMENT.md) to run this branch. Extract the whole ZIP and launch **Fortnite Visual Chest Counter.exe**. Portable builds include Python and the video tools.
 2. Open the app from its **Windows system tray** icon. In **Dashboard → Capture settings**, choose one capture source. The default is **Screen 1 HDR → SDR**. Use the regular Screen entry for an SDR monitor.
 3. In **Settings → Fortnite language**, select the HUD language. English, French and Brazilian Portuguese are supported, with a combined English/Portuguese option.
 4. Keep the gameplay fullscreen in 16:9 with the HUD visible. Click **Start counting**, or let **Match automation** reset and start the next local Battle Royale match at warmup.
@@ -29,7 +29,7 @@ The tray menu opens the window or quits the app. Closing the window can keep cou
 
 Open **Setup** above Dashboard for shortcuts to capture, match detection, overlay and Group configuration.
 
-When updating an existing installation, close the app, extract the whole ZIP into a new folder and copy your own `config.toml` and `state/` into it. Discord credentials remain available on the same Windows account. For optional replay verification, see the [Windows runtime requirements](docs/guides/matches-and-discord.md#automatic-replay-verification).
+When updating an existing installation, close the app, extract the whole ZIP into a new folder and copy your own `config.toml` and `state/` into it. Discord credentials remain available on the same Windows account. Install the first fork release from its ZIP to establish trust in the fork’s signing keys. Later compatible signed releases can update through the app. For optional replay verification, see the [Windows runtime requirements](docs/guides/matches-and-discord.md#automatic-replay-verification).
 
 ## Features
 

@@ -8,6 +8,6 @@ listed has signed: nothing in a release, a setting or a file can add to it.
 """
 
 TRUSTED_PUBLIC_KEYS = (
-    "ca8b875d7c1feda25b4b56b6ee29b589ab9a1ebccd764a36c0be96a57bdb5230",   # primary: signs ordinary releases
-    "ffd1c3aefedd8f411a4c337a90ba90958744d4d8cb13a567f426e1e8907952e7",   # recovery: kept offline, replaces a lost or stolen primary
+    "5afc6037bc21cf372817a9b6ad3bfbc3b64bef5d0c4c3b9894d7f9f63d197432",  # primary fork key
+    "9e329396cbe277eda711efa8947c8af98e54a42b8a86ddd8fe6da3ac58968136",  # recovery fork key
 )

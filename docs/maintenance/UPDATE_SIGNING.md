@@ -5,7 +5,7 @@ Internal / maintainer note. User-facing docs do not need any of this.
 The built-in updater installs only releases signed with a private key that never leaves the maintainer's control. This file
 covers what that protects, where trust comes from, and how to create, store, use and replace the keys.
 
-**Current state (2026-11-09):** both production keys exist, and their public halves are in `TRUSTED_PUBLIC_KEYS` in
+**Fork trust (v0.3.0):** the fork's primary and recovery public keys are in `TRUSTED_PUBLIC_KEYS` in
 [`update/trust.py`](../../src/fortnite_chest_counter/update/trust.py). Their private halves never enter this repository, a build or a test
 PC. Development and tests use temporary keys generated during each test run.
 
@@ -40,8 +40,7 @@ described below.
 
 ### First install
 
-v0.2.2 has no updater and no key. Installing the first signed version by hand (v0.2.3) establishes the trust list for every
-later update, so that download must come from the official GitHub release page.
+Install the first fork release (v0.3.0) from the fork's GitHub release page to establish its trust list. Upstream installations use a different update source and keys. Later releases from this fork must be signed with a key already trusted by the installed fork release.
 
 ## Files in each release
 

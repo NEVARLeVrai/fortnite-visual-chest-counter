@@ -435,7 +435,7 @@ def test_a_bug_in_the_check_cannot_escape_the_thread():
 # ---- the update server is fixed
 
 def test_the_update_server_cannot_be_changed_from_outside():
-    assert R.GITHUB.url.startswith("https://api.github.com/repos/GabrielGzS/fortnite-visual-chest-counter/releases")
+    assert R.GITHUB.url.startswith("https://api.github.com/repos/NEVARLeVrai/fortnite-visual-chest-counter/releases")
     assert R.GITHUB.allow_loopback_http is False
     assert inspect.signature(C.check_for_update).parameters["source"].default is R.GITHUB
     folder = ROOT / "src" / "fortnite_chest_counter" / "update"

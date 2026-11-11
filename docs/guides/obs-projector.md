@@ -7,7 +7,7 @@ stays exactly as it is.
 
 > **Status (v0.2.1):** the window capture is tested end to end with a stand-in window on our development PC (15 pictures
 > per second, nothing dropped, the same chests counted as from the video file). It has **not yet been tested with a real
-> OBS projector and a physical capture card** - please [tell us](https://github.com/GabrielGzS/fortnite-visual-chest-counter/issues)
+> OBS projector and a physical capture card** - please [tell us](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/issues)
 > how it works for you, with the app's diagnostics report.
 
 ```text

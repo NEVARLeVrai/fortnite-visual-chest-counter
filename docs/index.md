@@ -11,5 +11,5 @@
 | Diagnosing problems | [Troubleshooting](guides/troubleshooting.md), [diagnostic capture](guides/diagnostic-capture.md) |
 | Contributing and reviewing the local changes | [Development](DEVELOPMENT.md), [change and validation notes](CHANGES.md) |
 | Detector research | [Accuracy](reference/ACCURACY_NOTES.md), [detector notes](reference/DETECTOR_NOTES.md), [Nov 7 investigation](reference/INVESTIGATION_2026-11-07.md), [Nov 8 investigation](reference/INVESTIGATION_2026-11-08.md) |
-| Windows releases and updates | [Windows trust](maintenance/WINDOWS_TRUST.md), [updater](maintenance/UPDATER.md), [signing](maintenance/UPDATE_SIGNING.md), [v0.2.3 notes](releases/RELEASE_NOTES_v0.2.3.md) |
+| Windows releases and updates | [Windows trust](maintenance/WINDOWS_TRUST.md), [updater](maintenance/UPDATER.md), [signing](maintenance/UPDATE_SIGNING.md), [v0.3.0 notes](releases/RELEASE_NOTES_v0.3.0.md), [upstream v0.2.3 notes](releases/RELEASE_NOTES_v0.2.3.md) |
 | Plans and previous milestones | [Roadmap](ROADMAP.md) |

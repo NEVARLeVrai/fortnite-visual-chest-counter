@@ -116,7 +116,7 @@ DEFAULTS = {
         "bot_avatar_path": "",
         "bot_banner_path": "",
         "webhook_name": "Chest Counter",
-        "webhook_avatar_url": "https://raw.githubusercontent.com/NEVARLeVrai/fortnite-visual-chest-counter/ui/chest-tracker-dashboard/docs/previews/logo.png",
+        "webhook_avatar_url": "https://raw.githubusercontent.com/NEVARLeVrai/fortnite-visual-chest-counter/main/docs/previews/logo.png",
         "discord_presence_enabled": True,
         "discord_presence_rotate": False,
         "discord_presence_interval": 30,

@@ -176,4 +176,4 @@ and the addresses above.
   significant problems; the counter did not run on the gaming PC.
 - **What it shows:** SRT is a viable way to get the picture to the counter on this setup. It does not guarantee the same
   result on every network, PC or OBS configuration. If your setup behaves differently, please
-  [open an issue](https://github.com/GabrielGzS/fortnite-visual-chest-counter/issues) with the app's diagnostics report.
+  [open an issue](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/issues) with the app's diagnostics report.

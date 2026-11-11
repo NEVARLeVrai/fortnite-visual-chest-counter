@@ -54,7 +54,7 @@ RECORDING_CHOICES = (("Off (stop diagnostic files)", "off"), ("Only around my ma
                      ("Around chest decisions and my marks", "events"), ("Whole session  (about 10 GB per hour)", "session"))
 RECORDING_TEXT = {"marks": "only around your marks", "events": "around chest decisions and your marks",
                   "session": "the whole session"}
-REPO_URL = "https://github.com/GabrielGzS/fortnite-visual-chest-counter"
+REPO_URL = "https://github.com/NEVARLeVrai/fortnite-visual-chest-counter"
 UPDATE_HEALTH_DELAY_MS = 2000                                  # the window must have been running this long before it counts as started
 AUTO_CHECK_DELAY_MS = 6000                                     # after the window is up, so a check never competes with starting
 INSTALL_STOP_DEADLINE_MS = 45000                               # longer than the worker's own 30 seconds to stop
@@ -3031,7 +3031,7 @@ class DiscordPage(QWidget):
                 QUrl("https://discord.com/developers/applications"))),
             button("Invite bot", on_click=self.invite_bot),
             button("Discord setup guide", on_click=lambda: QDesktopServices.openUrl(
-                QUrl("https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/blob/ui/chest-tracker-dashboard/README.md#group-and-discord"))),
+                QUrl("https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/blob/main/README.md#group-and-discord"))),
         )
         links.addStretch(1)
         setup_layout.addLayout(links)
