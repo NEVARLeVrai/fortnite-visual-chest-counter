@@ -136,9 +136,10 @@ def register_commands(tree, guild, totals, ready, publish_board=None, board_sett
             return
         await interaction.response.defer(thinking=True)
         try:
-            matches = await finished_matches()
-        except (OSError, sqlite3.Error, ValueError):
-            await error(interaction, "Could not read shared match history. Try again in a moment.")
+            matches = await asyncio.wait_for(finished_matches(), timeout=8)
+        except (TimeoutError, OSError, sqlite3.Error, ValueError):
+            await interaction.edit_original_response(
+                content="Could not read shared match history. Try again in a moment.")
             return
         if id is None:
             title = "Shared match history"
@@ -154,7 +155,8 @@ def register_commands(tree, guild, totals, ready, publish_board=None, board_sett
             prefix = id.strip().casefold()
             found = [item for item in matches if prefix and item.fingerprint.startswith(prefix)]
             if len(found) != 1:
-                await error(interaction, "Use a unique match ID from `/match` or choose a suggestion.")
+                await interaction.edit_original_response(
+                    content="Use a unique match ID from `/match` or choose a suggestion.")
                 return
             item = found[0]
             title = f"Match {item.fingerprint[:12]}"
@@ -166,11 +168,16 @@ def register_commands(tree, guild, totals, ready, publish_board=None, board_sett
         page_size = 8
         pages = max(1, (len(rows) + page_size - 1) // page_size)
         if page > pages:
-            await error(interaction, f"Choose a page from 1 to {pages:,}.")
+            await interaction.edit_original_response(content=f"Choose a page from 1 to {pages:,}.")
             return
         first = (page - 1) * page_size
         body = "\n".join(rows[first:first + page_size]) or "No matches shared yet."
-        await reply(interaction, title, f"{intro}\n\n{body}\n\nPage {page:,} / {pages:,}")
+        detail = f"{intro}\n\n{body}\n\nPage {page:,} / {pages:,}"
+        if interaction.app_permissions.embed_links:
+            await interaction.edit_original_response(
+                embed=discord.Embed(title=title, description=detail, color=0x5865F2))
+        else:
+            await interaction.edit_original_response(content=f"**{title}**\n{detail}"[:2000])
 
     @tree.command(guild=guild, description="Show the full leaderboard or publish it in this channel")
     @app_commands.describe(publish="Publish the auto-updating board here (Manage Server required)")

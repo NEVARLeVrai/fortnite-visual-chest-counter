@@ -402,6 +402,9 @@ def test_leaderboard_command_reuses_rich_embed_and_checks_publish_permission(tmp
         async def defer(**kwargs):
             calls.append(("defer", kwargs))
 
+        async def edit_original(**kwargs):
+            calls.append(("edit_original", kwargs))
+
         async def publish(channel_id):
             published.append(channel_id)
             return "https://discord.com/channels/123/456/789"
@@ -413,7 +416,7 @@ def test_leaderboard_command_reuses_rich_embed_and_checks_publish_permission(tmp
             guild_id=123, channel_id=456, permissions=discord.Permissions.none(),
             app_permissions=discord.Permissions.all(),
             response=SimpleNamespace(defer=defer, send_message=send, is_done=lambda: False),
-            followup=SimpleNamespace(send=send),
+            followup=SimpleNamespace(send=send), edit_original_response=edit_original,
         )
         await command.callback(interaction)
         expected = discord_scoreboard.make_public_embed(players, team)
@@ -441,7 +444,10 @@ def test_leaderboard_command_reuses_rich_embed_and_checks_publish_permission(tmp
         ))
         interaction.response.is_done = lambda: True
         match = tree.get_command("match", guild=guild)
+        calls.clear()
         await match.callback(interaction)
+        assert calls[0] == ("defer", {"thinking": True})
+        assert calls[1][0] == "edit_original"
         history = calls[-1][1]["embed"].description
         assert "2** synchronized matches" in history
         assert "All shared matches" in history
@@ -453,8 +459,18 @@ def test_leaderboard_command_reuses_rich_embed_and_checks_publish_permission(tmp
         assert "**8** chests · 5 confirmed · 3 estimated" in summary
         assert "0.005818%" in summary and "Echo" not in summary
         await match.callback(interaction, page=2)
-        assert calls[-1][1]["ephemeral"]
-        assert "Choose a page from 1 to 1" in calls[-1][0][0]
+        assert calls[-1] == ("edit_original", {"content": "Choose a page from 1 to 1."})
+        interaction.app_permissions = discord.Permissions.none()
+        await match.callback(interaction)
+        assert calls[-1][1]["content"].startswith("**Shared match history**")
+        interaction.app_permissions = discord.Permissions.all()
+
+        def unavailable():
+            raise TimeoutError
+
+        monkeypatch.setattr(store, "sessions", unavailable)
+        await match.callback(interaction)
+        assert calls[-1] == ("edit_original", {"content": "Could not read shared match history. Try again in a moment."})
         interaction.response.is_done = lambda: False
 
         calls.clear()
