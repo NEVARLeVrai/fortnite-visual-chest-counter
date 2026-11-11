@@ -461,15 +461,15 @@ def test_a_changed_manifest_is_rejected():
     assert rejection(manifest.replace(b'"size":1', b'"size":2'), S.sign_manifest(manifest, [PRIMARY]), KEYS) == "signature_invalid"
 
 
-def test_the_version_is_consistent_and_public_beta():
-    assert R.parse_version(__version__) is not None and RELEASE_CHANNEL == "public beta"
-    assert f"**v{__version__} public beta**" in (ROOT / "README.md").read_text(encoding="utf-8")
-    assert f"v{__version__} public beta" in (ROOT / "packaging/README.html").read_text(encoding="utf-8")
+def test_the_version_is_consistent_and_stable():
+    assert R.parse_version(__version__) is not None and RELEASE_CHANNEL == "stable"
+    assert f"**v{__version__} stable**" in (ROOT / "README.md").read_text(encoding="utf-8")
+    assert f"v{__version__} stable" in (ROOT / "packaging/README.html").read_text(encoding="utf-8")
 
 
 def test_the_release_notes_explain_the_fork_trust_bootstrap():
     notes = (ROOT / "docs" / "releases" / f"RELEASE_NOTES_v{__version__}.md").read_text(encoding="utf-8")
-    assert notes.startswith(f"## Fortnite Visual Chest Counter v{__version__} — Public Beta") and R.zip_name(__version__) in notes
+    assert notes.startswith(f"## Fortnite Visual Chest Counter v{__version__} — Stable") and R.zip_name(__version__) in notes
     assert "first installation from this fork is manual" in notes.lower() and "in-app updater" in notes.lower()
     assert "experimental" in notes.lower() and "signing keys" in notes.lower()
     for forbidden in ("antivirus", "defender", "smart app control", "smartscreen", "windows protected"):

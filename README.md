@@ -4,7 +4,7 @@
   <p>
     <a href="https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/releases"><img src="https://img.shields.io/badge/Windows-10%20%2F%2011-ffd2a1?style=flat&logo=windows&logoColor=1c1814" alt="Windows 10 and 11"></a>
     <a href="docs/DEVELOPMENT.md"><img src="https://img.shields.io/badge/Python-3.13-c8b7a6?style=flat&logo=python&logoColor=1c1814" alt="Python 3.13 packaged runtime"></a>
-    <a href="docs/CHANGES.md"><img src="https://img.shields.io/badge/Status-public%20beta-62ddb0?style=flat" alt="Public beta"></a>
+    <a href="docs/CHANGES.md"><img src="https://img.shields.io/badge/Status-stable-62ddb0?style=flat" alt="Stable"></a>
     <a href="https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/actions/workflows/tests.yml"><img src="https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/actions/workflows/tests.yml/badge.svg?branch=main" alt="Automated tests"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-f0bd70?style=flat" alt="MIT license"></a>
     <a href="docs/guides/matches-and-discord.md"><img src="https://img.shields.io/badge/Discord-group%20stats-5865f2?style=flat&logo=discord&logoColor=white" alt="Discord group statistics"></a>
@@ -15,7 +15,7 @@
 
 A portable Windows app that reads Fortnite's chest-opening pop-ups from gameplay video. Use a screen, livestream, OBS feed, capture card or recording, then show the results on screen and share them with your group.
 
-Current fork release **v0.3.0 public beta**. [Download for Windows](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/releases/tag/v0.3.0) or see the [release notes](docs/releases/RELEASE_NOTES_v0.3.0.md).
+Current fork release **v0.3.0 stable**. [Download for Windows](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/releases/tag/v0.3.0) or see the [release notes](docs/releases/RELEASE_NOTES_v0.3.0.md).
 
 ## Get started
 

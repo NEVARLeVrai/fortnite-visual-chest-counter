@@ -1,8 +1,7 @@
 """
 Which releases exist on GitHub, and which one is the newest this copy of the app may update to.
 
-Every release so far is a Public Beta, which GitHub marks as a pre-release, and /releases/latest skips those. So this reads
-the release list and chooses for itself. Only an exact vMAJOR.MINOR.PATCH tag counts: an RC build, or any other tag, is not
+Read the release list to evaluate complete, signed packages, including pre-releases omitted by /releases/latest. Only an exact vMAJOR.MINOR.PATCH tag counts: an RC build, or any other tag, is not
 an update. A release is complete only when it has the zip and both signing files; anything else is ignored.
 
 The address comes from GITHUB below. Nothing in config.toml, the environment or the command line can change it: only tests

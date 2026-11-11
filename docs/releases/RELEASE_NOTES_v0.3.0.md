@@ -1,6 +1,6 @@
-## Fortnite Visual Chest Counter v0.3.0 — Public Beta
+## Fortnite Visual Chest Counter v0.3.0 — Stable
 
-First public beta of the fork. [Fortnite-Visual-Chest-Counter-v0.3.0.zip](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/releases/download/v0.3.0/Fortnite-Visual-Chest-Counter-v0.3.0.zip) · [Setup and features](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/blob/v0.3.0/README.md) · [Report an issue](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/issues)
+First stable release of the fork. [Fortnite-Visual-Chest-Counter-v0.3.0.zip](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/releases/download/v0.3.0/Fortnite-Visual-Chest-Counter-v0.3.0.zip) · [Setup and features](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/blob/v0.3.0/README.md) · [Report an issue](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/issues)
 
 ## Changes since upstream v0.2.3
 
