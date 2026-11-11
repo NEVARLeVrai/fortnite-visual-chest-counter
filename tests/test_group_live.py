@@ -232,7 +232,8 @@ def test_reset_leaderboard_has_no_ghost_team_summary_but_keeps_sessions(tmp_path
     session, = store.sessions()
     assert session.total == 6 and session.complete
 
-def test_final_webhook_contribution_has_custom_sender_without_changing_destination(monkeypatch):
+def test_final_webhook_contribution_has_custom_sender_without_changing_destination(monkeypatch, tmp_path):
+    monkeypatch.setattr(group.paths, "APP_DIR", tmp_path)
     sent = []
 
     class Opener:
@@ -246,7 +247,7 @@ def test_final_webhook_contribution_has_custom_sender_without_changing_destinati
     payload = json.loads(request.data)
     assert request.full_url == f"{WEBHOOK.url}?wait=true"
     assert payload["username"] == "Chest Counter"
-    assert payload["avatar_url"].endswith("/ui/chest-tracker-dashboard/docs/previews/logo.png")
+    assert payload["avatar_url"].endswith("/main/docs/previews/logo.png")
     assert payload["allowed_mentions"] == {"parse": []}
 
 def test_webhook_identity_uses_saved_name_and_avatar_and_allows_webhook_default(monkeypatch):
