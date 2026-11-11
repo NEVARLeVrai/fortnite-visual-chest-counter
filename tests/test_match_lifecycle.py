@@ -187,8 +187,10 @@ def test_qt_drains_before_saving_and_before_next_start(app, monkeypatch, send_en
     exit_worker(win)
     saved, = gui.match_history.read_history(win.match_history_path())
     assert (saved.certain, saved.total) == (9, 14)
-    assert win.counts == (0, 0)
+    assert win.counts == (9, 14)
     assert win.worker.starts == 1
+    _, cumulative = win.dashboard.match_summaries()
+    assert (cumulative.matches, cumulative.total) == (1, 14)
     display = {**gui.load_cfg()[0]["display"], "screen_show_matches": True}
     assert "Matches · 1" in win.dashboard.screen_overlay_text(display)
 
@@ -551,6 +553,7 @@ def test_qt_guest_follows_published_settings_and_restores_personal_choices(app):
     (b"Playlist_NoBuildBR_Duo", "Duo"),
     (b"Playlist_DefaultTrio", "Trio"),
     (b"Playlist_DefaultSquad", "Squad"),
+    (b"Playlist_HabaneroTrio", "Trio"),
     (b"Playlist_FrontEnd", None),
 ])
 def test_match_playlist_from_same_warmup(tmp_path, playlist, mode):
@@ -560,6 +563,18 @@ def test_match_playlist_from_same_warmup(tmp_path, playlist, mode):
                 + playlist + b'"\n')
     log.write_bytes(metadata + START)
     assert tail.poll() == (False, [("start", "", mode)] if mode else ["start"])
+
+
+def test_qt_ranked_warmup_starts_capture_and_selects_mode(app):
+    gui, win, log = app
+    win.set_match_automation(True)
+    seed(gui, win, (3, 5))
+    append(log, b'[2026.11.10-20.04.47:106][363]LogCsvProfiler: Display: Metadata set : '
+                b'playlistid="Playlist_HabaneroTrio"\r\n' + START)
+    win.poll_match_log()
+    assert win.worker.starts == 1
+    assert win.counts == (0, 0)
+    assert win.current_game_mode() == "Trio"
 
 
 def test_qt_auto_playlist_does_not_start_capture_and_allows_manual_override(app):

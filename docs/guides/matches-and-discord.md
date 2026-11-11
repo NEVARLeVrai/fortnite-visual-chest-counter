@@ -4,9 +4,9 @@
 
 Choose one source in **Dashboard → Capture settings**. To track manually, reset before the match, start counting and use **Finish match** to save it. **Group → Match history** opens match details when you click a data cell. You can also edit saved counts and delete checked rows. **Select all matches** checks every row. Local edits and deletions affect the history on your PC. Already shared results stay in the shared standings.
 
-**Settings → Match automation** is enabled by default. It reads new entries in `%LOCALAPPDATA%\FortniteGame\Saved\Logs\FortniteGame.log`. Battle Royale warmup resets and starts the count. A return to the lobby stops counting, saves the result to match history and resets the current match counter. For a match already underway when the app opened, use the manual controls.
+**Settings → Match automation** is enabled by default. It reads new entries in `%LOCALAPPDATA%\FortniteGame\Saved\Logs\FortniteGame.log`. Battle Royale warmup resets and starts the count. A return to the lobby stops counting and saves the result to match history. The final live count stays visible until the next Battle Royale warmup resets it. For a match already underway when the app opened, use the manual controls.
 
-The Dashboard mode selector defaults to **Auto**. It reads the Battle Royale playlist from the same log, independently of automatic start and finish. You can select **Solo**, **Duo**, **Trio** or **Squad** manually. The Pirate Token multiplier is manual. Unrecognised playlists may need manual mode selection.
+The Dashboard mode selector defaults to **Auto**. It reads the Battle Royale playlist from the same log, including Ranked playlists that use Fortnite’s Habanero naming, independently of automatic start and finish. You can select **Solo**, **Duo**, **Trio** or **Squad** manually. The Pirate Token multiplier is manual. Unrecognised playlists may need manual mode selection.
 
 ## Share with teammates
 

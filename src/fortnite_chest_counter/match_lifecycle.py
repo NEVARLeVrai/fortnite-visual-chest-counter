@@ -11,7 +11,7 @@ _STAMP = rb"\[(\d{4}\.\d\d\.\d\d-\d\d\.\d\d\.\d\d:\d{3})\]\[ *(\d{1,3})\]"
 _PREFIX = rb"(?:" + _STAMP + rb")?"
 _SESSION = re.compile(_STAMP + rb'LogCsvProfiler: Display: Metadata set : sessionid="([0-9a-fA-F]{32})"')
 _PLAYLIST = re.compile(_STAMP + rb'LogCsvProfiler: Display: Metadata set : playlistid="([A-Za-z0-9_]+)"')
-_BR_PLAYLIST = re.compile(rb"Playlist_(?:Default|NoBuildBR_?)(Solo|Duo|Trio|Squads?)", re.IGNORECASE)
+_BR_PLAYLIST = re.compile(rb"Playlist_(?:Default|NoBuildBR_?|Habanero)(Solo|Duo|Trio|Squads?)", re.IGNORECASE)
 _SESSION_LINES = 32
 _SESSION_WINDOW_MS = 10
 

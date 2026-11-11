@@ -4273,10 +4273,6 @@ class MainWindow(QMainWindow):
                 self.add_log({"type": "info", "text": "Battle Royale match saved to Group."})
                 if self.pages.currentWidget() is self.group:
                     self.group.load()
-            try:
-                self.reset_match_source()
-            except (C.UserError, OSError, ValueError) as error:
-                self.add_log({"type": "warn", "text": f"Could not reset the current match in the lobby. {error}"})
 
     def reset_match_source(self):
         primary = self._cfg_for_actions()

@@ -15,11 +15,11 @@
 
 A portable Windows app that reads Fortnite's chest-opening pop-ups from gameplay video. Use a screen, livestream, OBS feed, capture card or recording, then show the results on screen and share them with your group.
 
-Current fork release **v0.3.0 stable**. [Download for Windows](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/releases/tag/v0.3.0) or see the [release notes](docs/releases/RELEASE_NOTES_v0.3.0.md).
+Current fork release **v0.3.1 stable**. [Download for Windows](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/releases/tag/v0.3.1) or see the [release notes](docs/releases/RELEASE_NOTES_v0.3.1.md).
 
 ## Get started
 
-1. Get the [portable build](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/releases/tag/v0.3.0), or follow the [development guide](docs/DEVELOPMENT.md) to run this branch. Extract the whole ZIP and launch **Fortnite Visual Chest Counter.exe**. Portable builds include Python and the video tools.
+1. Get the [portable build](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/releases/tag/v0.3.1), or follow the [development guide](docs/DEVELOPMENT.md) to run this branch. Extract the whole ZIP and launch **Fortnite Visual Chest Counter.exe**. Portable builds include Python and the video tools.
 2. Open the app from its **Windows system tray** icon. In **Dashboard → Capture settings**, choose one capture source. The default is **Screen 1 HDR → SDR**. Use the regular Screen entry for an SDR monitor.
 3. In **Settings → Fortnite language**, select the HUD language. English, French and Brazilian Portuguese are supported, with a combined English/Portuguese option.
 4. Keep the gameplay fullscreen in 16:9 with the HUD visible. Click **Start counting**, or let **Match automation** reset and start the next local Battle Royale match at warmup.
@@ -47,7 +47,7 @@ When updating an existing installation, close the app, extract the whole ZIP int
 
 - [Verify matches with Fortnite replays](docs/guides/matches-and-discord.md#automatic-replay-verification) and optionally remove verified local replays.
 
-- Save manually with **Finish match**, or use new warmup and lobby entries from Fortnite's local log to start and finish automatically.
+- Save manually with **Finish match**, or use Fortnite's local log to finish automatically. The final count stays visible in the lobby and resets when the next Battle Royale match starts.
 - Detect the Battle Royale mode from the log or choose it manually. Automatic mode detection also works with manual start and finish.
 - Edit saved counts, tick individual matches or select all for batch deletion.
 - See verified teammates, team chest totals and team odds alongside your personal result. Team membership comes from matching session fingerprints and received player submissions.
