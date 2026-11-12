@@ -1,6 +1,6 @@
 # Setup guides
 
-Open **Stats** to review personal totals, your best match, and the chest-type breakdown from your local match history.
+Open [**Stats**](stats.md) to track progress, compare modes and inspect a saved match from the chart.
 
 In the app, select **Setup** above **Dashboard** for shortcuts to each configuration page.
 

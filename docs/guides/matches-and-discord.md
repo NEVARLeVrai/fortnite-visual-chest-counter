@@ -52,6 +52,8 @@ The default rotation is 30 seconds. When a verified team session has recent live
 
 Bot and webhook credentials are stored in Windows Credential Manager.
 
+## Commands
+
 | Command | Action |
 |---|---|
 | `/chests` | Show shared totals, or a player's stats including chest types. |
@@ -63,6 +65,10 @@ Bot and webhook credentials are stored in Windows Credential Manager.
 | `/reset` | Reset a player's standing. Requires Manage Server. |
 
 Commands work in the configured server wherever Discord allows them. From **Group**, the Host can also reset checked players or delete the published leaderboard. Saved local match history is managed separately.
+
+Use `/stats` for the group total, average, record and estimated Pirate Token chance across finished linked matches. Use `/stats player:Alex` to restrict the same metrics to one player.
+
+![Simulated group and player stats](../previews/discord-stats.png)
 
 The first page shows the cumulative totals and estimated Pirate Token chance for all synchronized matches. Use `/match page:2` for older entries and `/match id:<ID>` to open one match. The ID suggestions list recent matches. The history includes completed reports linked to a match ID, and reflects replay corrections received by the bot. Dates indicate when reports were received or updated. Private matches and old reports without a match ID stay outside this view.
 

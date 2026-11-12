@@ -13,7 +13,7 @@
 </head>
 <body><main>
 <header><img src="runtime/lib/fortnite_chest_counter/gui/assets/icon_128.png" alt="Chest Counter logo"><div><h1>Fortnite Visual Chest Counter</h1><p>v0.3.3 stable · Portable Windows setup guide.</p></div></header>
-<nav><a href="#start">Get started</a><a href="#counts">Counters</a><a href="#matches">Matches</a><a href="#overlay">Overlay</a><a href="#discord">Discord</a><a href="#diagnostics">Diagnostics</a><a href="#credits">Credits</a></nav>
+<nav><a href="#start">Get started</a><a href="#counts">Counters</a><a href="#matches">Matches</a><a href="#stats">Stats</a><a href="#overlay">Overlay</a><a href="#discord">Discord</a><a href="#diagnostics">Diagnostics</a><a href="#credits">Credits</a></nav>
 
 <h2 id="start">Get started</h2>
 <ol>
@@ -52,6 +52,9 @@
 <p>Install <b>.NET Runtime 10</b> and <b>ASP.NET Core Runtime 10</b> for Windows x64 if they are missing. Get both from the <a href="https://dotnet.microsoft.com/en-us/download/dotnet/10.0">Microsoft download page</a>. This feature also requires the packaged replay reader in <code>runtime/replay-reader</code>.</p>
 <p><b>Delete local Fortnite replays after successful verification</b> is off by default. The saved comparison remains available after cleanup.</p>
 
+<h2 id="stats">Personal stats</h2>
+<p>Open <b>Stats</b> to review saved results by period and mode. Switch the chart from dates to individual matches to see the five-match moving average. Select a bar to open the match and compare live and verified totals when available. The page includes type shares, records, averages and estimated Pirate Token chance.</p>
+
 <h2 id="overlay">On-screen overlay and Pirate Token odds</h2>
 <p>Under <b>Overlay</b>, choose the global optional statistics, enable the sections you want and edit their headings and multiline content. The preview, floating overlay and app-managed OBS text use those same sections. Adjust its transparency and choose whether it appears in screen sharing, then apply your changes.</p>
 <table><tr><th>Scope</th><th>Included counts</th></tr><tr><td>Personal</td><td>Your current match.</td></tr><tr><td>Team</td><td>Received submissions from your verified session. Shown when a teammate has contributed.</td></tr><tr><td>All matches</td><td>Your saved matches plus the current counter and match count, with each linked shared session included once.</td></tr></table>
@@ -70,7 +73,7 @@
 <p>Guests with sharing enabled follow the Host's published mode and boost. They can read the last published data when the bot is offline. Turn sharing off for local-only matches and personal settings.</p>
 <h3>Permissions</h3>
 <p>Enable <b>Message Content Intent</b> on the Developer Portal's Bot page. In the webhook channel, grant the bot <b>View Channel</b> and <b>Read Message History</b>. In public leaderboard or report channels, grant <b>View Channel</b>, <b>Send Messages</b> and <b>Embed Links</b>. The app's invitation requests zero guild-wide permissions.</p>
-<table><tr><th>Command</th><th>Action</th></tr><tr><td><code>/chests</code></td><td>Shared totals or a player's stats.</td></tr><tr><td><code>/leaderboard</code></td><td>Synchronized totals and player rankings.</td></tr><tr><td><code>/match</code></td><td>Browse shared match history and select a match ID for its summary.</td></tr><tr><td><code>/leaderboard publish:true</code></td><td>Publish or move the live board to this channel. Requires Manage Server.</td></tr><tr><td><code>/add</code></td><td>Correct a player's total. Requires Manage Server.</td></tr><tr><td><code>/reset</code></td><td>Reset a player's standing. Requires Manage Server.</td></tr></table>
+<table><tr><th>Command</th><th>Action</th></tr><tr><td><code>/chests</code></td><td>Shared totals or a player's stats.</td></tr><tr><td><code>/leaderboard</code></td><td>Synchronized totals and player rankings.</td></tr><tr><td><code>/match</code></td><td>Browse shared match history and select a match ID for its summary.</td></tr><tr><td><code>/stats</code></td><td>Show group or player statistics for finished shared matches.</td></tr><tr><td><code>/leaderboard publish:true</code></td><td>Publish or move the live board to this channel. Requires Manage Server.</td></tr><tr><td><code>/add</code></td><td>Correct a player's total. Requires Manage Server.</td></tr><tr><td><code>/reset</code></td><td>Reset a player's standing. Requires Manage Server.</td></tr></table>
 <p>Use <code>/leaderboard</code> for player totals and the latest synchronized match, <code>/chests</code> for player breakdowns, and <code>/match</code> to browse shared match history. Select a match ID for its summary.</p>
 <p>The bot name and avatar are separate from the webhook sender identity. Use <b>Apply bot profile</b> while it is online, with optional local PNG or JPEG avatar and banner files or the bundled artwork. This updates its account profile across servers. The webhook uses a display name and an HTTPS image URL on its outgoing messages. The bot presence rotates between available team totals, token odds and saved group stats. In Bot presence, edit the activity templates, select Watching, Playing or Listening, choose a 30–300 second interval and enable or disable rotation.</p>
 <p>Match reports can be sent manually or automatically after saving. The Host can reset checked players or delete the published board from Group. Bot and webhook credentials are stored in Windows Credential Manager.</p>

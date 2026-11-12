@@ -73,7 +73,7 @@ Cumulative odds keep each match's boost. For mixed rates, the calculation is `1 
 
 ### Personal stats
 
-Open **Stats** for totals, average chests per match, best match, chest-type bars, a time chart, a game-mode breakdown, and cumulative Pirate Token odds from your saved personal matches. Filter by game mode and choose all time, the last 7 days, or the last 30 days. In the per-match chart, the five-match moving average shows the trend. Select a bar to open its match and see the difference between live and verified totals when available. Replay-verified totals replace the corresponding live results.
+Open [**Stats**](docs/guides/stats.md) for totals, average chests per match, best match, chest-type bars, a time chart, a game-mode breakdown, and cumulative Pirate Token odds from your saved personal matches. Filter by game mode and choose all time, the last 7 days, or the last 30 days. In the per-match chart, the five-match moving average shows the trend. Select a bar to open its match and see the difference between live and verified totals when available. Replay-verified totals replace the corresponding live results.
 
 ### Group and Discord
 
@@ -118,7 +118,7 @@ The screenshots show the application with sample data.
 
 <table>
 <tr><td><a href="docs/previews/dashboard.png"><img src="docs/previews/dashboard.png" alt="Dashboard with personal, team and all-match stats" width="1080"></a></td></tr>
-<tr><td align="center">Dashboard — personal counts, verified team stats and cumulative match totals.</td></tr>
+<tr><td align="center">Dashboard — personal counts, shared standings and cumulative match totals.</td></tr>
 </table>
 
 <table>
@@ -132,6 +132,11 @@ The screenshots show the application with sample data.
 <table>
 <tr><td align="center"><a href="docs/previews/overlay.png"><img src="docs/previews/overlay.png" alt="Floating overlay with the current chest type and three statistic scopes" width="600"></a></td></tr>
 <tr><td align="center">Overlay — Personal, Team and All matches sections with custom text and token estimates.</td></tr>
+</table>
+
+<table>
+<tr><td><a href="docs/previews/stats.png"><img src="docs/previews/stats.png" alt="Stats with per-match chart, moving average, chest types and game-mode breakdown" width="1080"></a></td></tr>
+<tr><td align="center">Stats — filter personal history and select a chart bar to inspect a match.</td></tr>
 </table>
 
 ### Discord previews
@@ -150,6 +155,11 @@ These images are local simulations using sample values and the bot's embed data.
 <table>
 <tr><td><a href="docs/previews/discord-match-history.png"><img src="docs/previews/discord-match-history.png" alt="Simulated Discord match history and match summary" width="870"></a></td></tr>
 <tr><td align="center">Shared match history and a selected match summary</td></tr>
+</table>
+
+<table>
+<tr><td><a href="docs/previews/discord-stats.png"><img src="docs/previews/discord-stats.png" alt="Simulated Discord stats for the group and a player" width="870"></a></td></tr>
+<tr><td align="center">Discord /stats — group and player summaries from finished shared matches.</td></tr>
 </table>
 
 ## Capture setups

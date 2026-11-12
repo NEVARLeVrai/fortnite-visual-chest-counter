@@ -10,6 +10,10 @@ These are captures of the application using sample data. Click an image to view 
 
 ![Dashboard](dashboard.png)
 
+## Personal stats
+
+![Stats with sample history and the five-match moving average](stats.png)
+
 ## Group and match history
 
 ![Group](group.png)
@@ -35,6 +39,8 @@ These are local renderings with sample data. The leaderboard uses the bot’s pu
 ![Simulated Discord leaderboard](discord-leaderboard.png)
 
 ![Simulated shared match history and match summary](discord-match-history.png)
+
+![Simulated group and player stats](discord-stats.png)
 
 ![Simulated bot profile and presence](discord-profile.png)
 

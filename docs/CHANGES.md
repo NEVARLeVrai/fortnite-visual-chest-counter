@@ -7,6 +7,9 @@ changes; the pull request links here. Versioned release notes describe published
 
 ## Changes
 
+- Add the Stats page with date and mode filters, chest-type and mode breakdowns, a five-match moving average and clickable per-match details. Add Discord `/stats` for finished group or player results and make `/match` complete its initial interaction directly.
+- Adapt the upstream English small-HUD detector improvements for compressed 720p footage and deduplicate pop-ups briefly obscured by the map.
+
 - Show the verified replay count as confirmed in the Dashboard and personal overlay at the lobby. Keep the original live count in Compare replay and leave the next match’s counter independent.
 
 - Show synchronized chests, matches and Pirate Token odds above the Discord ranking. Count one result per
