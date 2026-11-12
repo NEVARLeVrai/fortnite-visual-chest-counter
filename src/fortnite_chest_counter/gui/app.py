@@ -20,9 +20,9 @@ import threading
 import time
 import traceback
 import uuid
-from collections import deque
+from collections import Counter, deque
 from contextlib import ExitStack
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import escape
 from pathlib import Path
 
@@ -2309,6 +2309,70 @@ class SettingsPage(QWidget):
         open_path(path)
 
 
+class StatsPage(QWidget):
+    def __init__(self, win):
+        super().__init__()
+        self.win = win
+        layout = page_layout(self, "Stats", "Personal results from your local match history.")
+        overview, body = card("Overview")
+        self.period = MaterialComboBox()
+        for caption, days in (("All time", 0), ("Last 7 days", 7), ("Last 30 days", 30)):
+            self.period.addItem(caption, days)
+        self.period.setAccessibleName("Stats period")
+        body.addWidget(self.period, 0, Qt.AlignLeft)
+        self.summary = label("", wrap=True)
+        self.record = label("", "hint", wrap=True)
+        body.addWidget(self.summary)
+        body.addWidget(self.record)
+        layout.addWidget(overview)
+
+        breakdown, body = card("Chest types")
+        self.types = label("", wrap=True)
+        for value in (self.summary, self.record, self.types):
+            value.setTextFormat(Qt.PlainText)
+        body.addWidget(self.types)
+        layout.addWidget(breakdown)
+        layout.addStretch(1)
+        self.period.currentIndexChanged.connect(self.load)
+
+    def load(self):
+        try:
+            matches = match_history.read_history(self.win.match_history_path())
+        except (OSError, ValueError) as error:
+            self.summary.setText(str(error))
+            self.record.clear()
+            self.types.clear()
+            return
+        days = self.period.currentData()
+        if days:
+            first_day = (datetime.now().date() - timedelta(days=days - 1)).isoformat()
+            matches = [match for match in matches if match.finished_at[:10] >= first_day]
+        if not matches:
+            self.summary.setText("No saved matches for this period.")
+            self.record.clear()
+            self.types.clear()
+            return
+        summary = match_stats.cumulative(matches, {}, "")
+        best = max(matches, key=lambda match: (match.total, match.finished_at))
+        verified = sum(bool(match.replay) for match in matches)
+        self.summary.setText(
+            f"{summary.total:,} chests · {summary.matches:,} matches · {summary.total / summary.matches:,.1f} per match\n"
+            f"{summary.certain:,} confirmed · {summary.total - summary.certain:,} estimated · {verified:,} replay verified\n"
+            f"Estimated Pirate Token chance · {summary.chance}"
+        )
+        self.record.setText(f"Best match · {best.total:,} chests · {best.finished_at} · {best.mode}")
+        types = Counter()
+        for match in matches:
+            types.update(match.chest_types)
+        missing = summary.total - sum(types.values())
+        if missing > 0:
+            types["unclassified"] += missing
+        self.types.setText("  ·  ".join(
+            f"{discord_group.GROUP_TYPE_LABELS.get(kind, kind)} {count:,}"
+            for kind, count in types.most_common() if count
+        ) or "No chests recorded.")
+
+
 class GroupPage(QWidget):
     scoreboard_result = Signal(object)
     scoreboard_removed = Signal(object)
@@ -3810,7 +3874,8 @@ class MainWindow(QMainWindow):
         self.discord = DiscordPage(self)
         self.group.attach_discord(self.discord)
         self.setup = SetupPage(self)
-        for page in (self.dashboard, self.overlay, self.settings_page, self.help, self.group, self.setup):
+        self.stats = StatsPage(self)
+        for page in (self.dashboard, self.overlay, self.settings_page, self.help, self.group, self.setup, self.stats):
             self.pages.addWidget(page)
         outer.addWidget(self._navigation_rail())
         content = QVBoxLayout()
@@ -3909,7 +3974,7 @@ class MainWindow(QMainWindow):
         column.setSpacing(4)
         self.destinations = QButtonGroup(rail)
         destinations = ((self.pages.indexOf(self.setup), "settings", "Setup"), (0, "dashboard", "Dashboard"), (1, "overlay", "Overlay"), (4, "group", "Group"),
-                        (2, "settings", "Settings"), (3, "help", "Help"))
+                        (self.pages.indexOf(self.stats), "stats", "Stats"), (2, "settings", "Settings"), (3, "help", "Help"))
         for index, icon, name in destinations:
             destination = NavigationDestination(icon, name)
             self.destinations.addButton(destination, index)
@@ -3941,6 +4006,8 @@ class MainWindow(QMainWindow):
             self.overlay.load()
         elif index == 2:
             self.settings_page.load()
+        elif self.pages.currentWidget() is self.stats:
+            self.stats.load()
         elif self.pages.currentWidget() is self.group:
             self.group.load()
             if self.group_role == "host":
@@ -5033,6 +5100,8 @@ class MainWindow(QMainWindow):
             saved = match_history.save_match(self.match_history_path(), match)
         if saved:
             self.dashboard.set_recent_matches(match_history.read_history(self.match_history_path()))
+            if self.pages.currentWidget() is self.stats:
+                self.stats.load()
         if saved and webhook is not None:
             try:
                 discord_group.queue_match(webhook, match, player)
@@ -5086,6 +5155,8 @@ class MainWindow(QMainWindow):
         self.dashboard.set_recent_matches(match_history.read_history(self.match_history_path()))
         if self.pages.currentWidget() is self.group:
             self.group.load()
+        elif self.pages.currentWidget() is self.stats:
+            self.stats.load()
 
     def deliver_saved_match(self, match):
         if self.group_role != "host":

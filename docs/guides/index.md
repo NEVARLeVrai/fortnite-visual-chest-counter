@@ -1,5 +1,7 @@
 # Setup guides
 
+Open **Stats** to review personal totals, your best match, and the chest-type breakdown from your local match history.
+
 In the app, select **Setup** above **Dashboard** for shortcuts to each configuration page.
 
 ## First run

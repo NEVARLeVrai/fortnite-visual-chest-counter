@@ -71,6 +71,10 @@ The app estimates the probability of at least one drop using the submitted chest
 
 Cumulative odds keep each match's boost. For mixed rates, the calculation is `1 − ∏(1 − pᵢ)ⁿᵢ`. A solo match contributes your own openings. A verified shared match contributes its team openings once. Percentages are calculated from those rolls instead of added together. [Fortnite Status](https://x.com/FortniteStatus/status/2119202610322227327) · [Independent calculator](https://piratetoken.quest/drop-rate/)
 
+### Personal stats
+
+Open **Stats** for totals, average chests per match, best match, chest types, and cumulative Pirate Token odds from your saved personal matches. Choose all time, the last 7 days, or the last 30 days. Replay-verified totals replace the corresponding live results.
+
 ### Group and Discord
 
 One person runs the **Host** bot. Other players use **Guest**, their own name and the shared webhook. The Host publishes a board and shares the **sync ID** so the other apps can read the same data.
