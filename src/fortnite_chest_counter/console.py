@@ -63,7 +63,9 @@ def _why(ev):
     r = ev.get("reason", "")
     counted = ev.get("certain_counted") or ev.get("approx_counted")
     if ev.get("scaled_popup"):
-        return "pop-up drawn larger than usual (approx only)"
+        if ev.get("certain_counted"):
+            return "pop-up confirmed"
+        return "pop-up estimated" if counted else "pop-up evidence too weak"
     if "promoted to HIGH" in r:
         return "confirmed by compression check"
     if "adjusted to LOW" in r:
@@ -83,8 +85,12 @@ def _why(ev):
 
 def _evidence(ev):
     """What was measured, worded so it is not mistaken for a probability."""
-    if ev.get("scaled_popup"):
-        return f"large-HUD match {ev['scaled_popup']['blur']:.2f} ({ev.get('adjusted_tier', '?')})"
+    if scaled := ev.get("scaled_popup"):
+        factor = scaled.get("scale", 1.0)
+        size = "small-HUD" if factor > 1 else "large-HUD" if factor < 1 else "native-size"
+        word = ev.get("popup_template")
+        evidence = f"{word} · " if word else ""
+        return f"{evidence}{size} match {scaled['blur']:.2f} ({ev.get('adjusted_tier', '?')})"
     if ev.get("popup_score") is not None:
         return f"match {ev['popup_score']:.2f} ({ev.get('adjusted_tier', '?')})"
     return f"prompt {ev.get('interaction_score', 0):.2f}"

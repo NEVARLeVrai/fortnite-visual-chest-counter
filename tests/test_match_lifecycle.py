@@ -776,6 +776,7 @@ def test_disabling_replay_verification_keeps_the_live_result(app):
     assert gui.match_history.read_history(win.match_history_path()) == [match]
 
 def test_local_replay_uses_timestamps_instead_of_group_alias(tmp_path):
+    from dataclasses import replace
     from datetime import datetime, timedelta
     import json
     from fortnite_chest_counter import match_history, replay_comparison
@@ -799,3 +800,10 @@ def test_local_replay_uses_timestamps_instead_of_group_alias(tmp_path):
         replay_comparison.read_report(report, match, local_start=start + timedelta(seconds=4))
     with pytest.raises(ValueError, match="Expected one replay"):
         replay_comparison.read_report(report, match)
+
+    row["SessionId"] = "A" * 32
+    report.write_text(json.dumps({"Matches": [row]}), encoding="utf-8")
+    linked = replace(match, session_fingerprint=sha256(b"a" * 32).hexdigest())
+    assert replay_comparison.read_report(report, linked, local_start=start + timedelta(seconds=7))[4] == 1
+    with pytest.raises(ValueError, match="Expected one replay"):
+        replay_comparison.read_report(report, replace(linked, session_fingerprint="b" * 64), local_start=start)

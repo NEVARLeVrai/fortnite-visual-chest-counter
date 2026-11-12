@@ -148,6 +148,12 @@ def lavender_mask(frame_rgb):
     return ((min_red_blue > MASK_MIN_RED_BLUE) & (green < min_red_blue - MASK_GREEN_BELOW)).astype(np.float32)
 
 
+def cool_highlight_mask(rgb):
+    """Preserve the pale XP text core while suppressing warm backgrounds."""
+    red, green, blue = rgb.astype(np.int16).transpose(2, 0, 1)
+    return ((blue >= red - 7) & (green > 140) & (blue > 145)).astype(np.float32)
+
+
 def scale_filter():
     return f"scale={NORMALIZED_WIDTH}:{NORMALIZED_HEIGHT}"
 

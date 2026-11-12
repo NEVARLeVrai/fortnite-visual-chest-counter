@@ -102,6 +102,7 @@ ROBUST_SEARCH_PX = 8          # the blurred match is searched within this many p
 SCALE_AWARE_POPUPS = True
 SCALED_POPUP_TEMPLATES = ("en:CHEST", "fr:COFFRE")  # long words can count at MEDIUM without a prompt
 PORTUGUESE_POPUP = "pt:BAÚ"
+LOCALIZED_SMALL_HUD_SCALE = 1.25
 SCALED_SCALES = (1.0, 0.9, 0.85, 0.8, 0.75)  # picture made smaller = HUD drawn larger
 WIDE_HUD_SCALE = 0.70
 REFERENCE_HUD_SCALE = 0.70  # native size in the calibrated 720p desktop capture
@@ -373,7 +374,8 @@ class ChestEstimator:
             self.wide_hud_roi = V.resize_box(roi, round(roi.shape[1] * scale), round(roi.shape[0] * scale))
         if self.french_group is not None:
             enlarged = (WIDE_HUD_SCALE, self.wide_hud_roi) if self.wide_hud_roi is not None else None
-            for score, y, x, kind, _ in self.french_group.observe(t, roi, enlarged):
+            faint_scale = 0.9 if text_mask.sum() >= 110 else None
+            for score, y, x, kind, _ in self.french_group.observe(t, roi, enlarged, faint_scale=faint_scale):
                 self.pending_popups.append({"onset": t, "y": y, "x": x, "score": score, "template": "fr:COFFRE",
                                             "scaled": {"blur": score, "scale": 1.0, "confirmed": True},
                                             "french_type": kind, "qualified_french": True})
@@ -677,6 +679,7 @@ class ChestEstimator:
             self._vote_french_type(t, best, plane[2])
         if plane is not None and score >= 0.58 and 0.9 in self._scaled_scales():
             self._observe_french_contrast_type(t, roi, plane)
+        self._observe_shifted_french_type(t, roi)
         for p in list(self.pending_scaled):                 # not claimed by the exact path in time -> a pop-up
             if not p.get("small") and t <= p["onset"] + POPUP_FINISH_DELAY:
                 origin = p.get("origin")
@@ -694,6 +697,38 @@ class ChestEstimator:
             if t >= p["onset"] + SCALED_WAIT:
                 self.pending_scaled.remove(p)
                 self._promote_scaled(p)
+
+    def _observe_shifted_french_type(self, t, roi):
+        """Read a settled bare word after a faint French notification moves horizontally."""
+        if len(self.pending_scaled) != 1 or self.french_template is None:
+            return
+        popup = self.pending_scaled[0]
+        if (popup["template"] != "fr:COFFRE" or popup.get("confirmed")
+                or popup["scale"] not in (0.85, 0.9) or t - popup["onset"] > SCALED_WAIT
+                or any(abs(popup["onset"] - stamp) <= 1.4 for stamp in self.recent_counted_popups)
+                or any(abs(popup["onset"] - p["onset"]) <= 1.4 for p in self.pending_popups)):
+            return
+        scale = 0.9
+        normalized = V.resize_box(roi, round(roi.shape[1] * scale), round(roi.shape[0] * scale))
+        mask = V.cool_highlight_mask(normalized)
+        h, w = self.french_template.shape
+        y, x = round(popup["y"] * scale), round(popup["x"] * scale)
+        y0, x0 = max(0, y - h), max(0, x - 55)
+        region = mask[y0:y + h, x0:x + 55]
+        score, word_y, word_x = V.robust_correlation_at(region, self.robust_templates["fr:COFFRE"], ROBUST_SIGMA)
+        if score < 0.84:
+            return
+        word_y, word_x = y0 + word_y, x0 + word_x
+        if chest_types.classify_french_line(mask, word_y, word_x, h, w, self.french_suffixes) != chest_types.NORMAL:
+            return
+        reads = popup.setdefault("shifted_type_reads", deque(maxlen=6))
+        reads.append((t, word_y, word_x))
+        aligned = sum(t - stamp <= 0.55 and abs(py - word_y) <= 2 and abs(px - word_x) <= 3
+                      for stamp, py, px in reads)
+        votes = popup.get("french_type_votes", {})
+        corroborated = votes.get(chest_types.NORMAL, 0) > 0 and set(votes) == {chest_types.NORMAL}
+        if aligned >= FRENCH_SCALED_CONFIRM_FRAMES or (aligned >= 2 and corroborated):
+            popup["french_type"] = chest_types.NORMAL
 
     def _vote_french_type(self, t, match, mask):
         _, word_y, word_x, scale, _, _ = match
@@ -1007,7 +1042,12 @@ class ChestEstimator:
         if self.scale_locked is None and self.preferred_hud_scale in scales:
             preferred = self.preferred_hud_scale
             scales = (preferred, *(scale for scale in scales if scale != preferred))
+        localized_small = "fr:COFFRE" in self.scaled_templates or supported_portuguese
+        if localized_small:
+            scales = (*scales, LOCALIZED_SMALL_HUD_SCALE)
         for s in scales:
+            if s == LOCALIZED_SMALL_HUD_SCALE and best[0] >= SCALED_TRIGGER:
+                continue
             if s == WIDE_HUD_SCALE:
                 scaled_roi = self.wide_hud_roi
                 if scaled_roi is None or best[0] >= SCALED_TRIGGER:
@@ -1018,6 +1058,8 @@ class ChestEstimator:
             if m.sum() < 20:
                 continue
             for tid, tpl in self.scaled_templates.items():
+                if s == LOCALIZED_SMALL_HUD_SCALE and tid not in ("fr:COFFRE", PORTUGUESE_POPUP):
+                    continue
                 if tid == PORTUGUESE_POPUP and (s == 1.0 or not supported_portuguese):
                     continue  # the native exact detector already handles this case
                 score, y, x = V.robust_correlation_at(m, tpl, ROBUST_SIGMA)
@@ -1029,6 +1071,8 @@ class ChestEstimator:
                     if V.best_template_correlation(m[max(0, y - 2):y + h + 2,
                                                      max(0, x - 2):x + w + 2], sharp)[0] < V.EVENT_HIGH_THRESHOLD:
                         continue
+                if s == LOCALIZED_SMALL_HUD_SCALE and score < SCALED_TRIGGER:
+                    continue
                 if s == WIDE_HUD_SCALE and score < SCALED_TRIGGER:
                     continue  # weak wide matches must not steal frames from native XP recovery
                 if score > best[0]:
@@ -1080,7 +1124,8 @@ class ChestEstimator:
         """Strong pop-ups vote for the stream's HUD scale (scaled: its scale; strong exact: 1.0); 2 agreeing votes lock it."""
         s = p.get("scaled")
         if s is not None:
-            if s["blur"] >= SCALED_LOCK_MIN:
+            # A resized French/Portuguese fallback must not disable the native scan.
+            if s["blur"] >= SCALED_LOCK_MIN and (s["scale"] <= 1.0 or "exact_small" in s):
                 self.scale_votes[s["scale"]] += 1
         elif p["score"] >= ROBUST_HIGH_MIN:
             self.scale_votes[1.0] += 1
@@ -1223,7 +1268,7 @@ class ChestEstimator:
                 approx, reason = True, reason + f"; MEDIUM counted approx: chest-object prompt support ({support[0]:.2f})"
         scaled = p.get("scaled")
         inc = p.get("increment")
-        if scaled is not None and scaled["scale"] > 1.0:
+        if scaled is not None and "exact_small" in scaled:
             # HUD drawn smaller: a native small-word match; the normal word's exact score says nothing here. HIGH only when both small-word
             # matches are as strong as SMALL_HIGH_*, otherwise MEDIUM and APPROX only.
             exact_small = scaled.get("exact_small", 0.0)

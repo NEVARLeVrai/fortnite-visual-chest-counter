@@ -2,6 +2,7 @@
 
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -33,8 +34,14 @@ def read_report(path, match, *, local_start=None):
             started = datetime.fromisoformat(row["MatchStartUtc"])
             if started.tzinfo is None:
                 started = started.replace(tzinfo=timezone.utc)
-            if local_start is not None and abs((started - local_start).total_seconds()) > 3:
-                continue
+            if local_start is not None:
+                session_id = row.get("SessionId")
+                fingerprint = getattr(match, "session_fingerprint", "")
+                if fingerprint and isinstance(session_id, str) and re.fullmatch(r"[0-9a-fA-F]{32}", session_id):
+                    if sha256(session_id.lower().encode("ascii")).hexdigest() != fingerprint:
+                        continue
+                elif abs((started - local_start).total_seconds()) > 3:
+                    continue
             duration = row["DurationSeconds"]
             if type(duration) not in (int, float) or not 0 < duration <= 7200:
                 continue
@@ -200,7 +207,7 @@ def verify_local_replay(match, finished_at):
                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 report = work / "report" / "data.json"
                 # A Group alias is not an Epic identity. Match the game-owned
-                # replay against its filename timestamp and the saved match end.
+                # replay against the session ID, or the filename time if the ID is absent.
                 stamp = path.stem.removeprefix("UnsavedReplay-")
                 local_start = datetime.strptime(stamp, "%Y.%m.%d-%H.%M.%S").astimezone()
                 replay, _, total, kinds, _, destroyed, timeline = read_report(

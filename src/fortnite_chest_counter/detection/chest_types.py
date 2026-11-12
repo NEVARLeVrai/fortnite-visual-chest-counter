@@ -201,12 +201,44 @@ class FrenchQualifiedPopups:
                 return []
         return rows
 
-    def observe(self, t, roi, enlarged=None):
+    def _read_faint_multiplier(self, roi):
+        y0, x0 = 35, 80
+        mask = V.cool_highlight_mask(roi[y0:110, x0:255])
+        if mask.sum() < 50:
+            return []
+        # Match the complete qualified line, then independently read the digit.
+        for kind, quantity, template in self.templates:
+            if kind != RARE or quantity != 2:
+                continue
+            score, y, x = V.robust_correlation_at(mask, template, SIGMA)
+            if score < 0.78:
+                return []
+            digit_region = mask[max(0, y - 3):y + 13, x + 54:x + 70]
+            digit_scores = sorted(
+                (max(V.best_template_correlation(digit_region, digit)[0] for digit in digits), value)
+                for value, digits in self.digits.items()
+            )
+            digit_score, decoded = digit_scores[-1]
+            if digit_score < 0.70 or digit_score - digit_scores[-2][0] < 0.15:
+                return []
+            y, x = y + y0, x + x0
+            header = roi[max(0, y - 38):y - 1, max(0, x - 19):x + 85].astype(np.int16)
+            blue = (header[:, :, 2] > header[:, :, 0] + 4).astype(np.float32)
+            if V.robust_correlation(blue, self.exp_blurred, SIGMA) >= 0.50:
+                return [(score, y + 3, x + 14, kind, decoded)]
+        return []
+
+    def observe(self, t, roi, enlarged=None, *, faint_scale=None):
         rows = self._read_rows(roi)
         if not rows and enlarged is not None:
             scale, normalized = enlarged
             rows = [(score, round(y / scale), round(x / scale), kind, quantity)
                     for score, y, x, kind, quantity in self._read_rows(normalized)]
+        if not rows and faint_scale is not None:
+            scale = faint_scale
+            normalized = V.resize_box(roi, round(roi.shape[1] * scale), round(roi.shape[0] * scale))
+            rows = [(score, round(y / scale), round(x / scale), kind, quantity)
+                    for score, y, x, kind, quantity in self._read_faint_multiplier(normalized)]
         if not rows:
             self.candidate, self.frames = None, 0
             self.missing_frames += 1

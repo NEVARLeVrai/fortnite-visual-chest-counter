@@ -7,6 +7,10 @@ changes; the pull request links here. Versioned release notes describe published
 
 ## Changes
 
+- Match automatically selected local replays by the Fortnite session ID when available. Filename and report start times are a fallback for reports without a usable ID.
+- Try a larger reading of French notifications when the usual scales give weak evidence, so the type can use the existing multi-frame checks. The Portuguese fallback still requires a sharp reading and chest-object evidence.
+- Recover washed-out French rare multipliers using a separate digit check and repeated readings, and classify an already counted normal chest when the same notification settles after moving.
+
 - Add the Stats page with date and mode filters, chest-type and mode breakdowns, a five-match moving average and clickable per-match details. Add Discord `/stats` for finished group or player results and make `/match` complete its initial interaction directly.
 - Adapt the upstream English small-HUD detector improvements for compressed 720p footage and deduplicate pop-ups briefly obscured by the map.
 

@@ -209,6 +209,28 @@ def test_french_chest_popups_count_once_including_the_storm():
     assert counted[0]["time"] < 6 and counted[1]["time"] >= 12
 
 
+def test_reduced_french_notifications_recover_both_chests_without_storm_false_positive():
+    defaults = settings.DEFAULTS["detector"]
+    E.configure(dict(defaults, languages=["fr"]))
+    try:
+        estimator = E.ChestEstimator(hud_scale=0.75)
+        events = []
+        for t, frame in frames("french_chest"):
+            roi = frame[V.ROI_Y:V.ROI_Y + V.ROI_H, V.ROI_X:V.ROI_X + V.ROI_W]
+            reduced = V.resize_box(roi, round(V.ROI_W * 0.8), round(V.ROI_H * 0.8))
+            roi[:] = 0
+            roi[:reduced.shape[0], :reduced.shape[1]] = reduced
+            events.extend(estimator.process_frame(t, frame))
+        events.extend(estimator.flush())
+    finally:
+        E.configure(defaults)
+    counted = [event for event in events if event["approx_counted"]]
+    assert len(counted) == 2
+    assert counted[0]["time"] < 6 and counted[1]["time"] >= 12
+    assert all(event["chest_type"] == "chest" for event in counted)
+    assert all(event["scaled_popup"]["scale"] == E.LOCALIZED_SMALL_HUD_SCALE for event in counted)
+
+
 def test_french_chest_types_are_confirmed_by_multiple_line_readings():
     from fortnite_chest_counter.detection import chest_types
 

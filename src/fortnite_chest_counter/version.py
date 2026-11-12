@@ -1,6 +1,6 @@
 """Single source of truth for the application version."""
 
-__version__ = "0.3.3"
+__version__ = "0.3.4"
 RELEASE_CHANNEL = "stable"
 APP_NAME = "Fortnite Visual Chest Counter"
 TAGLINE = "Visual chest detection for livestreams, screens, OBS & video files"
