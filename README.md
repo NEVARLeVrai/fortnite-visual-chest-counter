@@ -15,11 +15,11 @@
 
 A portable Windows app that reads Fortnite's chest-opening pop-ups from gameplay video. Use a screen, livestream, OBS feed, capture card or recording, then show the results on screen and share them with your group.
 
-Current fork release **v0.3.4 stable**. [Download for Windows](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/releases/tag/v0.3.4) or see the [release notes](docs/releases/RELEASE_NOTES_v0.3.4.md).
+Current fork release **v0.3.5 stable**. [Download for Windows](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/releases/tag/v0.3.5) or see the [release notes](docs/releases/RELEASE_NOTES_v0.3.5.md).
 
 ## Get started
 
-1. Get the [portable build](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/releases/tag/v0.3.4), or follow the [development guide](docs/DEVELOPMENT.md) to run this branch. Extract the whole ZIP and launch **Fortnite Visual Chest Counter.exe**. Portable builds include Python and the video tools.
+1. Get the [portable build](https://github.com/NEVARLeVrai/fortnite-visual-chest-counter/releases/tag/v0.3.5), or follow the [development guide](docs/DEVELOPMENT.md) to run this branch. Extract the whole ZIP and launch **Fortnite Visual Chest Counter.exe**. Portable builds include Python and the video tools.
 2. Open the app from its **Windows system tray** icon. In **Dashboard → Capture settings**, choose one capture source. The default is **Screen 1 HDR → SDR**. Use the regular Screen entry for an SDR monitor.
 3. In **Settings → Fortnite language**, select the HUD language. English, French and Brazilian Portuguese are supported, with a combined English/Portuguese option.
 4. Keep the gameplay fullscreen in 16:9 with the HUD visible. Click **Start counting**, or let **Match automation** reset and start the next local Battle Royale match at warmup.
@@ -27,7 +27,7 @@ Current fork release **v0.3.4 stable**. [Download for Windows](https://github.co
 
 The tray menu opens the window or quits the app. Closing the window can keep counting in the tray. These behaviours are configurable in Settings.
 
-Open **Setup** above Dashboard for shortcuts to capture, match detection, overlay and Group configuration.
+Open **Setup** above Dashboard for shortcuts to capture, match detection, overlay and Group configuration. **Test my setup** checks the selected capture, local HUD and game log, replay prerequisites and sharing setup. **Capture health** compares target and measured analysis FPS, shows skipped frames, and shows the stream backlog when available. **Team sync → Team details** shows the detected match ID, each teammate’s chest count, and how recently it was updated.
 
 When updating an existing installation, close the app, extract the whole ZIP into a new folder and copy your own `config.toml` and `state/` into it. Discord credentials remain available on the same Windows account. Install the first fork release from its ZIP to establish trust in the fork’s signing keys. Later compatible signed releases can update through the app. For optional replay verification, see the [Windows runtime requirements](docs/guides/matches-and-discord.md#automatic-replay-verification).
 

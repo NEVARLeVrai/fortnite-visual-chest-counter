@@ -59,3 +59,15 @@ def test_mixed_boost_odds_agree_across_history_overlay_and_discord():
     context = {"team": {"certain": team.certain, "total": team.total,
                         "log_no_drop": team.log_no_drop}}
     assert overlay_layout.render_sections(display, context)[1] == f"30 | {team.chance}"
+
+def test_capture_comparison_uses_live_types_and_excludes_unclassified():
+    from dataclasses import replace
+    from fortnite_chest_counter import match_stats
+    from fortnite_chest_counter.match_history import Match
+
+    match = Match("a", "2026-11-13 10:00", "p", "Default", "Duo", 8, 0, "0%",
+                  chest_types={"chest": 8}, capture_config={"kind": "desktop-hdr", "hud_scale": 0.73, "process_fps": 15},
+                  replay={"direct": {"chest_types": {"chest": 3, "unknown": 2, "unclassified": 3}}})
+    older = replace(match, capture_config={}, replay={}, chest_types={"unclassified": 8})
+    results = match_stats.capture_comparison([match, older])
+    assert results == {"Screen · HDR → SDR · HUD 73% · 15 fps": [1, 5, 2], "Unknown configuration": [1, 0, 0]}

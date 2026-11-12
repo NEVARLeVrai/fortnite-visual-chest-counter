@@ -88,7 +88,7 @@ def reconcile_context(context, state):
         if context.get("replay_verified") is True and (total_delta or certain_delta):
             personal = _personal(state, boost=personal["boost"], active=context.get("active") is True)
             team = None
-            context = {**context, "replay_verified": False}
+            context = {**context, "replay_verified": False, "team_status": "", "team_member_status": {}}
             total_delta = certain_delta = 0
         live_summaries = (personal, team) if context.get("current_saved") is True else (personal, team, cumulative)
         for summary in live_summaries:
@@ -120,7 +120,7 @@ def reconcile_context(context, state):
         cumulative["log_no_drop"] += personal["log_no_drop"]
         cumulative["matches"] += personal["matches"]
         team = None
-        context = {**context, "replay_verified": False}
+        context = {**context, "replay_verified": False, "team_status": "", "team_member_status": {}}
     return {**context, "version": 1, "state": dict(state), "personal": personal, "team": team,
             "cumulative": cumulative, "current_saved": context.get("current_saved") is True and same_match,
             "active": context.get("active") is True}
@@ -157,10 +157,18 @@ def render_sections(display, context, *, styled=False):
                         ("screen_show_types", "types")):
         if not display.get(flag, settings.DEFAULTS["display"][flag]):
             hidden.add(token)
+    status = context.get("team_status")
+    status = status.strip() if isinstance(status, str) else ""
+    ages = context.get("team_member_status")
+    ages = ages if isinstance(ages, dict) else {}
     rendered = []
     for scope, summary in zip(SCOPES, summaries):
-        if summary is None or not display.get(f"screen_{scope}_enabled", True):
+        if not display.get(f"screen_{scope}_enabled", True):
             rendered.append("")
+            continue
+        message = (escape(status) if styled else status) if scope == "team" else ""
+        if summary is None:
+            rendered.append(message)
             continue
         values = {name: settings.format_count(summary[name], thousands)
                   for name in ("certain", "total", "matches", "players")}
@@ -173,8 +181,12 @@ def render_sections(display, context, *, styled=False):
                 values["types"] = current_types
         template = display.get(f"screen_{scope}_template", settings.DEFAULTS["display"][f"screen_{scope}_template"])
         template = template if isinstance(template, str) else ""
-        values["member_totals"] = "\n".join(
-            f"{name} · {settings.format_count(count, thousands)}" for name, count in summary["member_totals"])
+        members = []
+        for name, count in summary["member_totals"]:
+            age = ages.get(name.casefold()) if scope == "team" else None
+            row = f"{name} · {settings.format_count(count, thousands)}"
+            members.append(f"{row} · {age}" if isinstance(age, str) and age else row)
+        values["member_totals"] = "\n".join(members)
         lines = []
         for line in template.replace("\\n", "\n").splitlines():
             if any("{" + token + "}" in line for token in hidden) or any("{" + token + "}" in line and not values[token]
@@ -189,6 +201,8 @@ def render_sections(display, context, *, styled=False):
                         part = f"<b>{part}</b>"
                 parts[index] = part
             lines.append("".join(parts).rstrip())
+        if message:
+            lines.append(message)
         text = "\n".join(lines).strip()
         rendered.append(text.replace("\n", "<br>") if styled else text)
     return tuple(rendered)

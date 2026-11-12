@@ -25,6 +25,8 @@ class Match:
 
     replay: dict = field(default_factory=dict)
     live_events: list = field(default_factory=list)
+    recovered_partial: bool = False
+    capture_config: dict = field(default_factory=dict)
 
     @property
     def total(self):
@@ -75,6 +77,7 @@ def read_history(path):
                or not all(isinstance(value, str) for value in
                           (row.snapshot, row.finished_at, row.profile_id, row.profile, row.mode, row.token_chance,
                            row.player, row.group_webhook_id))
+               or type(row.recovered_partial) is not bool or not isinstance(row.capture_config, dict)
                or not isinstance(row.replay, dict) or not isinstance(row.chest_types, dict)
                or any(not isinstance(kind, str) or type(count) is not int or count < 0
                       for kind, count in row.chest_types.items())
@@ -100,7 +103,7 @@ def verify_match(path, snapshot, total, token_chance, chest_types, replay):
         if row.snapshot == snapshot and not row.replay:
             direct = {"certain": row.certain, "estimated": row.estimated, "chest_types": row.chest_types}
             verified = replace(row, certain=total, estimated=0, token_chance=token_chance,
-                               chest_types=chest_types, replay={**replay, "direct": direct})
+                               chest_types=chest_types, replay={**replay, "direct": direct}, recovered_partial=False)
             rows[index] = verified
             _write_history(path, rows)
             return verified
@@ -132,7 +135,15 @@ def delete_matches(path, snapshots):
 
 
 def _write_history(path, rows):
-    atomic_write(path, json.dumps({"version": 1, "matches": [asdict(row) for row in rows]},
+    records = []
+    for row in rows:
+        record = asdict(row)
+        if not row.recovered_partial:
+            record.pop("recovered_partial")
+        if not row.capture_config:
+            record.pop("capture_config")
+        records.append(record)
+    atomic_write(path, json.dumps({"version": 1, "matches": records},
                                   ensure_ascii=False, indent=2) + "\n")
 
 

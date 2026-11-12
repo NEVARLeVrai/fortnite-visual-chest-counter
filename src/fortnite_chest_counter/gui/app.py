@@ -13,6 +13,7 @@ import ctypes
 import json
 import math
 import os
+import shutil
 import sqlite3
 import sys
 import subprocess
@@ -34,7 +35,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                                QScrollArea, QSizePolicy, QSlider, QSpinBox, QSplitter, QStackedWidget, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTreeWidget, QTreeWidgetItem, QSystemTrayIcon, QVBoxLayout, QWidget)
 
 from fortnite_chest_counter import counter as C
-from fortnite_chest_counter import diagnostics_cleanup, discord_bot, discord_group, discord_scoreboard, discord_summary, match_history, match_lifecycle, match_stats, overlay_layout, paths, profiles, replay_comparison, settings
+from fortnite_chest_counter import capture_export, diagnostics_cleanup, discord_bot, discord_group, discord_scoreboard, discord_summary, match_history, match_lifecycle, match_stats, overlay_layout, paths, profiles, replay_comparison, settings
 from fortnite_chest_counter.detection import chest_types
 from fortnite_chest_counter.gui import theme
 from fortnite_chest_counter.gui import update_manager as UM
@@ -1137,6 +1138,8 @@ class Dashboard(QWidget):
         source_row = QHBoxLayout()
         source_row.setSpacing(8)
         source_row.addWidget(self.pill, 0, Qt.AlignVCenter)
+        self.match_phase = label("Waiting for a match", "hint", wrap=True)
+        self.match_phase.setTextFormat(Qt.PlainText)
         self.source_chips = []
         chips = QHBoxLayout()
         chips.setSpacing(2)
@@ -1152,9 +1155,9 @@ class Dashboard(QWidget):
         source_row.addLayout(chips)
         source_row.addStretch(1)
         sources_layout.addLayout(source_row)
+        sources_layout.addWidget(self.match_phase)
         self.metrics = label("", "metrics", wrap=True)
         self.metrics.hide()
-        sources_layout.addWidget(self.metrics)
         layout.addLayout(sources_layout)
 
         board = QHBoxLayout()
@@ -1248,6 +1251,30 @@ class Dashboard(QWidget):
         rail_layout.addLayout(count_actions)
         board.addWidget(rail, 1)
         layout.addLayout(board)
+        diagnostics = QHBoxLayout()
+        diagnostics.setSpacing(14)
+        team_card, team_layout = card("Team sync")
+        self.team_sync = label("Group sharing is off.", "hint", wrap=True)
+        self.team_sync.setTextFormat(Qt.PlainText)
+        team_layout.addWidget(self.team_sync)
+        team_layout.addWidget(button("Team details", on_click=self.show_team_sync), 0, Qt.AlignLeft)
+        diagnostics.addWidget(team_card, 1)
+
+        capture_card, capture_layout = card("Capture health")
+        self.capture_health = label("No active capture.", "hint", wrap=True)
+        capture_layout.addWidget(self.capture_health)
+        capture_layout.addWidget(self.metrics)
+        self.mark = button("Report missed chest   Ctrl+Alt+M", on_click=win.mark_moment)
+        capture_layout.addWidget(self.mark, 0, Qt.AlignLeft)
+        self.rec_status = label("", "hint", wrap=True)
+        capture_layout.addWidget(self.rec_status)
+        self.export_report = button("Export chest diagnostic...", on_click=win.export_chest_diagnostic)
+        capture_layout.addWidget(self.export_report, 0, Qt.AlignLeft)
+        capture_layout.addStretch(1)
+        capture_layout.addWidget(button("Recover interrupted match...", on_click=win.recover_interrupted_match),
+                                 0, Qt.AlignLeft)
+        diagnostics.addWidget(capture_card, 1)
+        layout.addLayout(diagnostics)
         self.update_token_odds()
         overlay_card, overlay_layout = card()
         overlay_header = QHBoxLayout()
@@ -1355,12 +1382,7 @@ class Dashboard(QWidget):
                                  "Can be changed while counting; the counts are not affected.")
         row.addWidget(self.rec_mode, 1)
         box_layout.addLayout(row)
-        self.mark = button("Mark moment   Ctrl+Alt+M", on_click=win.mark_moment)
-        actions = connected_buttons(self.analyse, self.mark)
-        actions.addStretch(1)
-        box_layout.addLayout(actions)
-        self.rec_status = label("", "hint", wrap=True)
-        box_layout.addWidget(self.rec_status)
+        box_layout.addWidget(self.analyse, 0, Qt.AlignLeft)
         # optional panels
         row = QHBoxLayout()
         box.hide()
@@ -1581,6 +1603,54 @@ class Dashboard(QWidget):
             return ""
         return snapshot
 
+    def team_fingerprint(self, snapshot, webhook_id):
+        fingerprint = self.win._match_fingerprint
+        if not fingerprint and not self.win.workers_active():
+            fingerprint = next((match.session_fingerprint for match in getattr(self, "saved_matches", ())
+                                if match.snapshot == snapshot and match.group_webhook_id == webhook_id), "")
+        return fingerprint
+
+    def team_sync_details(self, cfg, snapshot, team, verified=None):
+        group = getattr(self.win, "group", None)
+        if group is None or not cfg["app"]["group_share_matches"]:
+            return "", {}
+        counting = self.win.workers_active()
+        active = counting or self.win._match_active
+        webhook = group._webhook
+        fingerprint = self.team_fingerprint(snapshot, webhook.id if webhook else "")
+        own = (verified.player if verified and team else cfg["app"]["group_player"]).strip().casefold()
+        status = ""
+        if active:
+            if not own:
+                status = "Set your player name in Group."
+            elif not webhook:
+                status = "Group webhook is not configured."
+            elif not fingerprint:
+                status = "Current match is not identified."
+            elif self.win.group_role == "guest" and not group._scoreboard_id:
+                status = "Shared data message ID is missing."
+            elif discord_group.webhook_retry_after(webhook) > 0:
+                status = "Discord sync paused. Retrying automatically."
+            elif self.win.group_role == "host" and not group._is_board_host():
+                status = "Waiting for the Discord bot."
+            elif group._scoreboard_error:
+                status = "Could not refresh team data. Retrying."
+            elif team is None:
+                status = "Waiting for a teammate's first update."
+        session = next((item for item in group._sessions if fingerprint and item.fingerprint == fingerprint), None)
+        members = {member.name.casefold(): member for member in session.players} if session else {}
+        ages = {}
+        now = time.time()
+        for name, _ in team.member_totals if team else ():
+            key = name.casefold()
+            if key != own and (member := members.get(key)):
+                ages[key] = match_stats.member_freshness(member, now)
+        if own and active:
+            ages[own] = "Live · local counter" if counting else "Capture paused"
+        elif own and any(match.snapshot == snapshot for match in getattr(self, "saved_matches", ())):
+            ages[own] = "Final result"
+        return status, ages
+
     def match_summaries(self, snapshot=None, verified=None):
         cfg = load_cfg()[0]
         group = getattr(self.win, "group", None)
@@ -1591,13 +1661,10 @@ class Dashboard(QWidget):
         sharing = bool(cfg["app"]["group_share_matches"] and webhook)
         certain, total = self.win.counts
         boost = self.token_boost.currentData()
-        fingerprint = self.win._match_fingerprint
         if snapshot is None:
             snapshot = self.current_snapshot(cfg)
         matches = getattr(self, "saved_matches", ())
-        if not fingerprint:
-            fingerprint = next((match.session_fingerprint for match in matches if match.snapshot == snapshot
-                                and match.group_webhook_id == webhook_id), "")
+        fingerprint = self.team_fingerprint(snapshot, webhook_id)
         current = None
         if sharing and fingerprint:
             if verified is not None:
@@ -1629,6 +1696,10 @@ class Dashboard(QWidget):
             personal = match_stats.personal(verified.certain, verified.total, boost)
             breakdown = types_text({kind: {"approx": count} for kind, count in verified.chest_types.items()}) or "no chests yet"
         team, cumulative = self.match_summaries(snapshot, verified)
+        team_status, member_status = self.team_sync_details(cfg, snapshot, team, verified)
+        group = getattr(self.win, "group", None)
+        webhook_id = group._webhook.id if group is not None and group._webhook else ""
+
         def summary(value):
             if value is None:
                 return None
@@ -1641,6 +1712,9 @@ class Dashboard(QWidget):
                 "state": {"certain": certain, "approximate": total,
                           "session_started_at": latest.get("session_started_at")},
                 "personal": own, "team": summary(team), "cumulative": summary(cumulative),
+                "team_status": team_status, "team_member_status": member_status,
+                "group_sharing": cfg["app"]["group_share_matches"],
+                "team_match_id": self.team_fingerprint(snapshot, webhook_id) if cfg["app"]["group_share_matches"] else "",
                 "current_saved": saved is not None,
                 "replay_verified": verified is not None,
                 "active": self.win._match_active}
@@ -1671,6 +1745,36 @@ class Dashboard(QWidget):
             return
         self._last_overlay_context = key
 
+    def update_team_sync(self, context):
+        team = context["team"]
+        status = context["team_status"]
+        fingerprint = context["team_match_id"]
+        if team:
+            summary = f"{team['players']} players · {fmt(team['total'])} chests"
+            if status:
+                summary += f" · {status}"
+        else:
+            summary = status or ("No team results for this match." if context["group_sharing"]
+                                 else "Group sharing is off.")
+        self.team_sync.setText(summary)
+        lines = [summary]
+        if fingerprint:
+            lines.append(f"Match ID · {fingerprint[:12]}")
+        personal = context["personal"]
+        local_name = personal["names"].strip()
+        states = context["team_member_status"]
+        members = team["member_totals"] if team else (
+            ((local_name, personal["total"]),) if states.get(local_name.casefold()) else ()
+        )
+        for name, count in members:
+            state = states.get(name.casefold(), "Update time unavailable")
+            lines.append(f"{name} · {fmt(count)} chests · {state}")
+        self.team_sync_details_text = "\n".join(lines)
+
+    def show_team_sync(self):
+        self.update_team_sync(self.overlay_context())
+        show_notice_dialog(self, "Team sync", self.team_sync_details_text)
+
     def refresh_screen_overlay(self):
         page = getattr(self.win, "overlay", None)
         if page is not None and page.isVisible():
@@ -1678,6 +1782,7 @@ class Dashboard(QWidget):
         if self.screen_overlay_display is None:
             return
         context = self.overlay_context()
+        self.update_team_sync(context)
         replay_verified = context["replay_verified"]
         if replay_verified or getattr(self, "_showing_verified_counts", False):
             personal = context["personal"]
@@ -2489,11 +2594,24 @@ class StatsPage(QWidget):
         self.mode = MaterialComboBox()
         self.mode.addItem("All modes", None)
         self.mode.setAccessibleName("Game mode filter")
+        self.quality = MaterialComboBox()
+        self.quality.setAccessibleName("Match quality filter")
+        for caption, key in (("All results", None), ("Many unknown chests", "unknown"),
+                             ("No verified replay", "unverified"), ("Large replay difference", "delta")):
+            self.quality.addItem(caption, key)
+        self.quality.setToolTip("Filter the page using the saved live result and replay verification.")
         filters = QHBoxLayout()
         filters.addWidget(self.period)
         filters.addWidget(self.mode)
+        filters.addWidget(self.quality)
+        self.capture_filter = MaterialComboBox()
+        self.capture_filter.addItem("All capture setups", None)
+        self.capture_filter.setAccessibleName("Capture configuration filter")
+        filters.addWidget(self.capture_filter)
         filters.addStretch()
         body.addLayout(filters)
+        self.quality_hint = label("", "hint", wrap=True)
+        body.addWidget(self.quality_hint)
         self.summary = label("", wrap=True)
         self.record = label("", "hint", wrap=True)
         for value in (self.summary, self.record):
@@ -2522,10 +2640,24 @@ class StatsPage(QWidget):
         self.modes.header().setSectionResizeMode(QHeaderView.Stretch)
         body.addWidget(self.modes)
         layout.addWidget(modes)
+        capture, body = card("By capture configuration", "Unknown rate uses classified live openings, before replay corrections.")
+        self.capture_table = GroupPage._table(("Configuration", "Matches", "Typed openings", "Unknown", "Unknown rate"))
+        self.capture_table.setSelectionMode(QTreeWidget.NoSelection)
+        self.capture_table.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        body.addWidget(self.capture_table)
+        layout.addWidget(capture)
         layout.addStretch(1)
         self.period.currentIndexChanged.connect(self.load)
         self.mode.currentIndexChanged.connect(self.load)
+        self.quality.currentIndexChanged.connect(self.change_quality)
+        self.capture_filter.currentIndexChanged.connect(self.load)
         self.trend_grouping.currentIndexChanged.connect(self.load)
+
+    def change_quality(self):
+        if self.quality.currentData() is not None:
+            with QSignalBlocker(self.trend_grouping):
+                self.trend_grouping.setCurrentIndex(self.trend_grouping.findData(True))
+        self.load()
 
     def load(self):
         error = ""
@@ -2542,6 +2674,18 @@ class StatsPage(QWidget):
                 for mode in modes:
                     self.mode.addItem(mode, mode)
                 self.mode.setCurrentIndex(max(0, self.mode.findData(selected_mode)))
+        setups = sorted({match_stats.capture_label(match.capture_config) for match in matches})
+        if setups != [self.capture_filter.itemData(i) for i in range(1, self.capture_filter.count())]:
+            selected = self.capture_filter.currentData()
+            with QSignalBlocker(self.capture_filter):
+                self.capture_filter.clear()
+                self.capture_filter.addItem("All capture setups", None)
+                for setup in setups:
+                    self.capture_filter.addItem(setup, setup)
+                self.capture_filter.setCurrentIndex(max(0, self.capture_filter.findData(selected)))
+        setup = self.capture_filter.currentData()
+        if setup is not None:
+            matches = [match for match in matches if match_stats.capture_label(match.capture_config) == setup]
         mode = self.mode.currentData()
         if mode is not None:
             matches = [match for match in matches if match.mode == mode]
@@ -2550,16 +2694,33 @@ class StatsPage(QWidget):
             first_day = (today - timedelta(days=days - 1)).isoformat()
             matches = [match for match in matches if first_day <= match.finished_at[:10] <= today.isoformat()]
 
+        quality = self.quality.currentData()
+        if quality is not None:
+            matches = [match for match in matches if replay_comparison.matches_quality(match, quality)]
+        hint = {
+            "unknown": f"At least {replay_comparison.UNKNOWN_MINIMUM} unknown chests and "
+                       f"{replay_comparison.UNKNOWN_PERCENT}% of the live total.",
+            "unverified": "Includes matches without a verified replay result.",
+            "delta": f"At least {replay_comparison.REPLAY_DELTA_MINIMUM} more or fewer chest openings "
+                     "in the replay than in the live result.",
+        }.get(quality, "")
+        self.quality_hint.setText(hint)
+        self.quality_hint.setVisible(bool(hint))
+
         by_match = self.trend_grouping.currentData()
         self.trend.set_matches(matches, days, today, by_match=by_match)
         self.trend_hint.setVisible(bool(by_match and matches))
         self.modes.clear()
+        self.capture_table.clear()
+        for setup, (games, typed, unknown) in match_stats.capture_comparison(matches).items():
+            rate = f"{unknown / typed:.1%}" if typed else "—"
+            self.capture_table.addTopLevelItem(QTreeWidgetItem((setup, fmt(games), fmt(typed), fmt(unknown), rate)))
         for index in range(self.type_rows.count() - 1, 0, -1):
             row = self.type_rows.takeAt(index).widget()
             row.hide()
             row.deleteLater()
         if not matches:
-            self.summary.setText(error or "No saved matches for this period.")
+            self.summary.setText(error or "No saved matches match these filters.")
             self.record.clear()
             self.type_rows.addWidget(label("No chests recorded.", "hint"))
             return
@@ -2613,18 +2774,15 @@ class StatsPage(QWidget):
     def open_match(self, match):
         lines = [
             f"{match.finished_at} · {match.mode}",
+            match_stats.capture_label(match.capture_config),
             f"{match.total:,} chests · {match.certain:,} confirmed · {match.estimated:,} estimated",
             f"Estimated Pirate Token chance · {match_stats.personal(match.certain, match.total, match.boost).chance}",
         ]
         for kind, count in sorted(match.chest_types.items()):
             if count:
                 lines.append(f"{discord_group.GROUP_TYPE_LABELS.get(kind, kind)} · {count:,}")
-        direct = match.replay.get("direct")
-        if isinstance(direct, dict) and all(type(direct.get(key)) is int for key in ("certain", "estimated")):
-            live_total = direct["certain"] + direct["estimated"]
-            lines.append(f"Live · {live_total:,} chests  /  Replay · {match.total:,} chests ({match.total - live_total:+,})")
-        elif match.replay:
-            lines.append("Replay verified")
+        if recap := replay_comparison.saved_recap(match, discord_group.GROUP_TYPE_LABELS):
+            lines.extend(("", *recap))
         show_notice_dialog(self, "Match details", "\n".join(lines))
 
 
@@ -2633,6 +2791,7 @@ class GroupPage(QWidget):
     scoreboard_removed = Signal(object)
     players_reset = Signal(object)
     public_board_result = Signal(object)
+    delivery_states_result = Signal(str, object)
 
     """Local match history and the shared Discord leaderboard."""
 
@@ -2640,6 +2799,7 @@ class GroupPage(QWidget):
         super().__init__()
         self.win = win
         self.matches = []
+        self._delivery_states = {}
         self._webhook = None
         self._ranks_key = None
         self._team_summary = None
@@ -2647,6 +2807,7 @@ class GroupPage(QWidget):
         self._sessions = ()
         self._scoreboard_id = ""
         self._scoreboard_pending = False
+        self._scoreboard_error = False
         self._published = None
         self._public_pending = False
         self._publish_channel = None
@@ -2654,6 +2815,7 @@ class GroupPage(QWidget):
         self._published_channel = ""
         self._next_scoreboard_refresh = time.monotonic() + discord_group.webhook_sync_delay(None, base=0)
         self.scoreboard_result.connect(self._scoreboard_result)
+        self.delivery_states_result.connect(self.receive_delivery_states)
         self.scoreboard_removed.connect(self._scoreboard_removed)
         self.players_reset.connect(self._players_reset)
         self.public_board_result.connect(self._public_board_result)
@@ -2706,18 +2868,25 @@ class GroupPage(QWidget):
         self.edit = button("Edit...", on_click=self.edit_match)
         self.delete = button("Delete selected...", on_click=self.delete_match)
         self.compare_replay = button("Compare replay...", on_click=self.compare_saved_replay)
+        self.retry_replay = button("Retry replay", on_click=self.retry_selected_replay)
         self.select_matches = QCheckBox("Select all matches")
-        for action in (self.edit, self.delete, self.compare_replay):
+        for action in (self.edit, self.delete, self.compare_replay, self.retry_replay):
             action.setEnabled(False)
         row.addWidget(self.select_matches)
         row.addLayout(connected_buttons(self.edit, self.delete))
-        row.addWidget(self.compare_replay)
+        row.addLayout(connected_buttons(self.compare_replay, self.retry_replay))
         row.addStretch(1)
         history_layout.addLayout(row)
+        self.retry_discord = button("Retry Discord", on_click=self.retry_selected_discord)
+        self.retry_discord.setEnabled(False)
+        history_layout.addWidget(self.retry_discord, 0, Qt.AlignLeft)
         self.stats = label("", "hint", wrap=True)
         history_layout.addWidget(self.stats)
         self.history = self._table(("Finished", "Player", "Mode", "Certain", "Approx", "Total", "Token chance",
-                                    "Team players", "Team total", "Team chance"))
+                                    "Team players", "Team total", "Team chance", "Replay", "Discord"))
+        self.history.header().moveSection(10, 3)
+        self.history.header().moveSection(11, 4)
+        self.history.setColumnWidth(10, 174)
         self.history.itemClicked.connect(self._open_match_details)
         self.history.currentItemChanged.connect(self._selection_changed)
         self.history.itemChanged.connect(lambda *_: self.update_checked_actions())
@@ -2799,12 +2968,18 @@ class GroupPage(QWidget):
 
     def load(self):
         self.feedback.clear()
-        self.history.clear()
-        self.select_matches.setChecked(False)
-        self.update_checked_actions()
         self.load_player_setup()
         self.apply_match_settings()
         self.sync_scoreboard()
+        self.load_history()
+
+    def load_history(self):
+        selected = self.history.currentItem()
+        selected_snapshot = self.matches[selected.data(0, Qt.UserRole)].snapshot if selected is not None else None
+        checked = {self.matches[item.data(0, Qt.UserRole)].snapshot for item in self.checked_items(self.history)}
+        self.history.clear()
+        self.select_matches.setChecked(False)
+        self.update_checked_actions()
         try:
             self.matches = match_history.read_history(self.win.match_history_path())
         except (OSError, ValueError) as error:
@@ -2824,10 +2999,81 @@ class GroupPage(QWidget):
             row = QTreeWidgetItem((match.finished_at, match.player or "—", match.mode, fmt(match.certain),
                                    fmt(match.estimated), fmt(match.total), match.token_chance))
             row.setData(0, Qt.UserRole, index)
-            row.setCheckState(0, Qt.Unchecked)
+            row.setCheckState(0, Qt.Checked if match.snapshot in checked else Qt.Unchecked)
             self.history.addTopLevelItem(row)
-        self.history.setCurrentItem(self.history.topLevelItem(0))
+            if match.snapshot == selected_snapshot:
+                self.history.setCurrentItem(row)
+        if self.history.currentItem() is None:
+            self.history.setCurrentItem(self.history.topLevelItem(0))
+        self.update_checked_actions()
         self.refresh_history_teams()
+        self.refresh_replay_status()
+        self.refresh_delivery_status()
+
+    def receive_delivery_states(self, webhook_id, states):
+        self._delivery_states[webhook_id] = states
+        self.refresh_delivery_status()
+        if self.feedback.text() == "Retrying selected match...":
+            self.feedback.clear()
+
+    def delivery_status(self, match):
+        if not match.group_webhook_id or not match.player:
+            return "Local only"
+        if match.recovered_partial:
+            return "Awaiting verification"
+        if self._webhook is None or self._webhook.id != match.group_webhook_id:
+            return "Group unavailable"
+        status, verified = self._delivery_states.get(match.group_webhook_id, {}).get(match.snapshot, ("Pending", False))
+        return "Pending" if match.replay and not verified and status == "Sent" else status
+
+    def refresh_delivery_status(self):
+        with QSignalBlocker(self.history):
+            for index in range(self.history.topLevelItemCount()):
+                item = self.history.topLevelItem(index)
+                item.setText(11, self.delivery_status(self.matches[item.data(0, Qt.UserRole)]))
+        self._selection_changed(self.history.currentItem(), None)
+
+    def retry_selected_discord(self):
+        item = self.history.currentItem()
+        if item is None:
+            return
+        match = self.matches[item.data(0, Qt.UserRole)]
+        if self.delivery_status(match) in ("Pending", "Retry needed"):
+            started = self.win.discord.retry_group_outbox(snapshot=match.snapshot)
+            self.feedback.setText("Retrying selected match..." if started else
+                                  "Discord is busy or cooling down. The app retries automatically.")
+
+    def refresh_replay_status(self):
+        with QSignalBlocker(self.history):
+            for index in range(self.history.topLevelItemCount()):
+                item = self.history.topLevelItem(index)
+                match = self.matches[item.data(0, Qt.UserRole)]
+                default = "Partial result" if match.recovered_partial else "Not verified"
+                status = "Verified" if match.replay else self.win.replay_status.get(match.snapshot, default)
+                if match.recovered_partial and status not in ("Partial result", "Checking replay..."):
+                    status = f"Partial result · {status}"
+                item.setText(10, status)
+                item.setToolTip(10, self.replay_status_hint(status))
+        self._selection_changed(self.history.currentItem(), None)
+
+    @staticmethod
+    def replay_status_hint(status):
+        return {
+            "No matching replay found": "Enable Fortnite replay recording. Retry once the file appears in Demos.",
+            "Replay reader unavailable": "Use Setup → Test my setup to check the reader and .NET runtimes.",
+            "Replay unreadable": "Retry after Fortnite finishes writing. If it persists, check the replay in Fortnite.",
+            "No replay could be linked safely": "The available reports did not identify this match.",
+            "Multiple replays match this result": "Keep one copy of the matching replay in Demos before retrying.",
+            "Match ID unavailable for safe verification": "This match has no saved Fortnite ID. Compare an exported report manually.",
+        }.get(status.removeprefix("Partial result · "), status)
+
+    def retry_selected_replay(self):
+        item = self.history.currentItem()
+        if item is None:
+            return
+        match = self.matches[item.data(0, Qt.UserRole)]
+        self.win.start_replay_verification(match, manual=True)
+
     def refresh_history_teams(self):
         sessions = {session.fingerprint: session for session in self._sessions}
         webhook_id = self._webhook.id if self._webhook else ""
@@ -2859,6 +3105,7 @@ class GroupPage(QWidget):
             self._webhook = None
             self.player_status.setText(str(error))
         self.webhook.setPlaceholderText("••••••••  (saved)" if self._webhook else "Discord webhook URL")
+        self.refresh_delivery_status()
 
     def save_role(self, _):
         role = self.role.currentData()
@@ -2942,6 +3189,7 @@ class GroupPage(QWidget):
             return
         self.load_player_setup()
         if previous != (self._webhook, self._scoreboard_id):
+            self._scoreboard_error = False
             self._host_match_settings = None
             self._sessions = ()
             self.apply_match_settings()
@@ -2963,6 +3211,7 @@ class GroupPage(QWidget):
             self.player_status.setText(str(error))
             return
         self.load_player_setup()
+        self.win.set_group_delivery_status("")
         self._host_match_settings = None
         self._sessions = ()
         self.apply_match_settings()
@@ -3055,11 +3304,13 @@ class GroupPage(QWidget):
         self.update_checked_actions()
         self.delete_board.setEnabled(bool(webhook and ident and host and not self._scoreboard_pending))
         if webhook is None:
-            self._sessions = ()
+            if self._sessions:
+                self._sessions = ()
+                self.win.dashboard.refresh_screen_overlay()
             self.render_ranks(())
             return
         cooldown = discord_group.webhook_retry_after(webhook)
-        if cooldown > 0:
+        if cooldown > 0 and (publish or not host):
             self._next_scoreboard_refresh = time.monotonic() + cooldown
             if publish:
                 self.player_status.setText(f"Discord sync paused; retrying in {math.ceil(cooldown)} seconds.")
@@ -3068,9 +3319,11 @@ class GroupPage(QWidget):
             return
         if self._scoreboard_pending or (not publish and time.monotonic() < self._next_scoreboard_refresh):
             return
-        if not host and (not ident or self.win.pages.currentWidget() not in (self, self.win.dashboard)):
+        overlay = self.win.dashboard.screen_overlay
+        live_view = self.win.workers_active() or (overlay is not None and overlay.isVisible())
+        if not host and (not ident or (not live_view and self.win.pages.currentWidget() not in (self, self.win.dashboard))):
             return
-        self._next_scoreboard_refresh = time.monotonic() + discord_group.webhook_sync_delay(webhook)
+        self._next_scoreboard_refresh = time.monotonic() + discord_group.webhook_sync_delay(None if host else webhook)
         self._scoreboard_pending = True
         previous = self._published
         dashboard = self.win.dashboard
@@ -3082,21 +3335,26 @@ class GroupPage(QWidget):
         def sync():
             try:
                 created = None
+                error = ""
                 if host:
                     settings = host_settings
                     store = discord_group.GroupStore(webhook.id)
                     players, team = store.board()
                     sessions = store.sessions()
                     ranking = discord_scoreboard.rows(players)
-                    if (self._is_board_host() and webhook == self._webhook and ident == self._scoreboard_id and
-                            (publish or (ident and previous != (webhook.id, ident, ranking, team, settings, sessions)))):
-                        created, _ = discord_scoreboard.publish(webhook, ident, ranking, team, settings=settings, sessions=sessions, data_only=True)
+                    if (cooldown <= 0 and self._is_board_host() and webhook == self._webhook and ident == self._scoreboard_id
+                            and (publish or (ident and previous != (webhook.id, ident, ranking, team, settings, sessions)))):
+                        try:
+                            created, _ = discord_scoreboard.publish(
+                                webhook, ident, ranking, team, settings=settings, sessions=sessions, data_only=True)
+                        except (OSError, ValueError) as failure:
+                            error = str(failure)
                 else:
                     ranking, team, settings, sessions = discord_scoreboard.fetch(webhook, ident, with_sessions=True)
                     store = discord_group.GroupStore(webhook.id)
                     store.merge_sessions(sessions)
                     sessions = store.sessions()
-                result = (webhook, ident, host, ranking, team, settings, created, "", sessions)
+                result = (webhook, ident, host, ranking, team, settings, created, error, sessions)
             except (OSError, ValueError, sqlite3.Error) as error:
                 result = (webhook, ident, host, (), None, None, None, str(error))
             self.scoreboard_result.emit(result)
@@ -3157,11 +3415,16 @@ class GroupPage(QWidget):
             return
         if host and self.win.group_role != "host" and not published:
             return
+        self._scoreboard_error = bool(error)
+        if received_sessions:
+            self._sessions = received_sessions[0]
+            self.refresh_history_teams()
+            self.win.dashboard.refresh_screen_overlay()
         if error:
             cooldown = discord_group.webhook_retry_after(webhook)
-            if cooldown > 0:
+            if cooldown > 0 and not host:
                 self._next_scoreboard_refresh = time.monotonic() + cooldown
-            else:
+            elif cooldown <= 0:
                 self._publish_channel = None
             self.player_status.setText(error)
             self.publish_board.setEnabled(self._is_board_host())
@@ -3178,10 +3441,6 @@ class GroupPage(QWidget):
                 else:
                     self.player_status.setText("Group sync ready. Share its data message ID with Guests.")
             self.copy_board.setEnabled(True)
-        if received_sessions:
-            self._sessions = received_sessions[0]
-            self.refresh_history_teams()
-            self.win.dashboard.refresh_screen_overlay()
         if not host and self.win.group_role == "guest" and settings != self._host_match_settings:
             self._host_match_settings = settings
             self.apply_match_settings()
@@ -3233,7 +3492,11 @@ class GroupPage(QWidget):
 
     def _selection_changed(self, item, previous):
         self.edit.setEnabled(item is not None)
-        self.compare_replay.setEnabled(item is not None)
+        match = self.matches[item.data(0, Qt.UserRole)] if item is not None else None
+        self.compare_replay.setEnabled(match is not None)
+        self.retry_replay.setEnabled(match is not None and not match.replay
+                                     and self.win.replay_status.get(match.snapshot) != "Checking replay...")
+        self.retry_discord.setEnabled(match is not None and self.delivery_status(match) in ("Pending", "Retry needed"))
 
     def reset_selected_players(self):
         names = [item.text(1) for item in self.checked_items(self.ranks)]
@@ -3271,9 +3534,9 @@ class GroupPage(QWidget):
         if column == 0:
             return  # The first column contains the checkbox for bulk actions.
         match = self.matches[item.data(0, Qt.UserRole)]
-        lines = self._detail_lines(self.history, item, (0, 1, 2, 3, 4, 5, 6, 7, 8, 9))
-        if match.replay:
-            lines.append("Replay verified. Use Compare replay to see the differences.")
+        lines = self._detail_lines(self.history, item, (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11))
+        if recap := replay_comparison.saved_recap(match, discord_group.GROUP_TYPE_LABELS):
+            lines.extend(("", *recap, "Use Compare replay to see the timelines."))
         show_notice_dialog(self, "Match details", "\n".join(lines))
 
     def _open_player_details(self, item, column):
@@ -3411,6 +3674,10 @@ class DiscordPage(QWidget):
         setup_layout.addWidget(self.auto_start)
         self.setup_status = label("", "hint", wrap=True)
         setup_layout.addWidget(self.setup_status)
+        self.connection_status = label("", "hint", wrap=True)
+        self.connection_status.setTextFormat(Qt.PlainText)
+        self.connection_status.hide()
+        setup_layout.addWidget(self.connection_status)
         layout.addWidget(setup)
 
         appearance, appearance_layout = card("Bot profile", "Apply changes to the bot's Discord profile in every server.")
@@ -3598,7 +3865,11 @@ class DiscordPage(QWidget):
         text = {"online": "Bot online", "connecting": "Connecting", "stopping": "Stopping",
                 "error": "Bot error", "stopped": "Bot stopped" if self._configured else "Setup required"}[state]
         self.sender_status.setText(f"●  {text}")
-        self.sender_status.setToolTip(detail)
+        timing = getattr(self.runner, "connection_timing", "") if self.runner else ""
+        self.sender_status.setToolTip("\n".join(part for part in (detail, timing) if part))
+        connection = "\n".join(part for part in (detail, timing) if part) if active else ""
+        self.connection_status.setText(connection)
+        self.connection_status.setVisible(bool(connection))
         self.sender_status.setStyleSheet(theme.pill_style(theme.CERTAIN if state == "online" else theme.MUTED))
         if detail and state == "error":
             self.setup_status.setText(detail)
@@ -3638,7 +3909,7 @@ class DiscordPage(QWidget):
             self.runner.stop(timeout=timeout)
         self.refresh_sender_status()
 
-    def retry_group_outbox(self):
+    def retry_group_outbox(self, *, snapshot=None):
         try:
             webhook = discord_group.load_webhook()
         except (OSError, ValueError) as error:
@@ -3658,19 +3929,31 @@ class DiscordPage(QWidget):
         def deliver():
             try:
                 for match in match_history.read_history(history):
-                    if match.group_webhook_id == webhook.id and match.player:
-                        discord_group.queue_match(webhook, match, match.player)
+                    if (match.group_webhook_id == webhook.id and match.player
+                            and (snapshot is None or match.snapshot == snapshot)):
                         if match.replay:
                             discord_group.queue_verified(webhook, match, match.player)
-                sent = discord_group.flush(webhook)
+                        elif not match.recovered_partial:
+                            discord_group.queue_match(webhook, match, match.player)
+                sent = discord_group.flush(webhook) if snapshot is None else discord_group.flush(webhook, snapshot=snapshot)
+                self.win.group_delivery_status.emit(
+                    webhook.id, "Discord correction pending" if discord_group.has_pending_verified(webhook) else "")
                 if sent:
                     self.win.auto_discord_result.emit(f"Group contributions sent to Discord ({sent}).")
             except (OSError, ValueError, sqlite3.Error) as error:
+                self.win.group_delivery_status.emit(webhook.id, "Discord sync will retry")
                 self.win.auto_discord_result.emit(f"Group delivery failed. {error}")
             finally:
-                self._outbox_active.release()
+                try:
+                    states = discord_group.GroupStore(webhook.id).delivery_states()
+                    self.win.group.delivery_states_result.emit(webhook.id, states)
+                except (OSError, sqlite3.Error):
+                    pass
+                finally:
+                    self._outbox_active.release()
 
         threading.Thread(target=deliver, daemon=True, name="discord-group-outbox").start()
+        return True
 
     def save_sender_start(self, enabled):
         self.win.save_app_option("auto_start_discord_sender", enabled)
@@ -3737,9 +4020,20 @@ class DiscordPage(QWidget):
 
 
 class SetupPage(QWidget):
+    check_finished = Signal(str)
+
     def __init__(self, win):
         super().__init__()
+        self.win = win
         layout = page_layout(self, "Setup", "Set up your capture, match history and optional sharing.")
+        check, check_layout = card("Configuration check", "Check this PC before your next match.")
+        self.check_button = button("Test my setup", "primary", on_click=self.run_check)
+        self.check_report = label("", "hint", wrap=True)
+        self.check_report.setTextFormat(Qt.PlainText)
+        check_layout.addWidget(self.check_button, 0, Qt.AlignLeft)
+        check_layout.addWidget(self.check_report)
+        self.check_finished.connect(self.show_check_result)
+        layout.addWidget(check)
         steps = (
             ("Capture Fortnite",
              "Choose your screen in Dashboard → Capture settings. For a washed-out HDR picture, "
@@ -3765,6 +4059,102 @@ class SetupPage(QWidget):
                                0, Qt.AlignLeft)
             layout.addWidget(frame)
         layout.addStretch(1)
+
+
+    def run_check(self):
+        self.check_button.setEnabled(False)
+        self.check_report.setText("Checking setup...")
+        source = self.win.dashboard.source.currentData() or {}
+        connected = self.win.connected if self.win.workers_active() else None
+        role = self.win.group_role
+        stream_url = self.win.dashboard.url.text().strip()
+
+        def check():
+            try:
+                cfg = load_cfg()[0]
+                result = self.check_setup(cfg, source, connected, role, stream_url)
+            except (OSError, ValueError, C.UserError) as error:
+                result = f"Setup check could not finish. {error}"
+            self.check_finished.emit(result)
+
+        threading.Thread(target=check, daemon=True, name="setup-check").start()
+
+    @staticmethod
+    def check_setup(cfg, source, connected, role, stream_url):
+        kind = source.get("source")
+        if connected and connected.get("resolution"):
+            width, height = connected["resolution"]
+            capture = f"Active · {width} × {height}"
+        elif kind == "stream" and not stream_url.lower().startswith(("https://", "http://")):
+            capture = "Paste a stream URL in Capture settings."
+        elif kind:
+            selected = {"desktop-hdr": "HDR → SDR", "desktop": "SDR screen"}.get(kind, kind)
+            capture = f"{selected} selected · Start counting and open Live preview to check the picture."
+        else:
+            capture = "Select a source in Dashboard → Capture settings."
+        hud = paths.local_fortnite_hud_scale()
+        if kind not in ("desktop", "desktop-hdr", "window"):
+            hud_result = "Local HUD settings apply to local screen and window capture."
+        elif hud is not None:
+            hud_result = f"{hud:.0%} read from Fortnite settings."
+        else:
+            hud_result = "Could not read the HUD size. Start Fortnite and apply its HUD settings."
+        log = match_lifecycle.local_log_path()
+        try:
+            if log is None:
+                raise FileNotFoundError
+            with log.open("rb") as stream:
+                stream.read(1)
+        except OSError:
+            log_result = "Open Fortnite so it creates its local game log."
+        else:
+            log_result = "Game log readable."
+        demos = replay_comparison.demos_path()
+        if not cfg["app"]["auto_verify_replay"]:
+            replay = "Automatic verification is off. Enable it in Settings if wanted."
+        elif not replay_comparison.reader_path().is_file() or shutil.which("dotnet") is None:
+            replay = "Replay reader or .NET missing. Check the installation and replay guide."
+        elif not SetupPage.replay_runtimes_available():
+            replay = "Install both .NET 10 and ASP.NET Core 10 x64 runtimes."
+        elif demos is None or not demos.is_dir():
+            replay = "Enable Record Replays in Fortnite and finish a match."
+        elif not any(replay_comparison.eligible_replay(path) for path in demos.iterdir()):
+            replay = "Replay folder found. Finish a match with Record Replays enabled to test it."
+        else:
+            replay = "Replay reader and local replay files found."
+        if not cfg["app"]["group_share_matches"]:
+            group = "Sharing is off."
+        elif not cfg["app"]["group_player"].strip():
+            group = "Set your player name in Group."
+        else:
+            try:
+                webhook = discord_group.load_webhook()
+            except (OSError, ValueError):
+                webhook = None
+            if webhook is None:
+                group = "Save a valid webhook in Group."
+            elif role == "guest" and not cfg["app"]["group_scoreboard_id"]:
+                group = "Enter the sync message ID provided by your host."
+            else:
+                group = "Local sharing setup found. Check Team sync during a match."
+        return "\n".join(f"{name} · {result}" for name, result in (
+            ("Capture", capture), ("HUD", hud_result), ("Match detection", log_result),
+            ("Replay", replay), ("Group", group),
+        ))
+
+    @staticmethod
+    def replay_runtimes_available():
+        try:
+            result = subprocess.run(["dotnet", "--list-runtimes"], capture_output=True, text=True, timeout=5,
+                                    check=True, creationflags=paths.child_process_flags())
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return all(any(line.startswith(f"{name} 10.") for line in result.stdout.splitlines())
+                   for name in ("Microsoft.NETCore.App", "Microsoft.AspNetCore.App"))
+
+    def show_check_result(self, result):
+        self.check_report.setText(result)
+        self.check_button.setEnabled(True)
 
 
 class HelpPage(QWidget):
@@ -4038,6 +4428,8 @@ class NavigationDestination(QPushButton):
 
 class MainWindow(QMainWindow):
     auto_discord_result = Signal(str)
+    group_delivery_status = Signal(str, str)
+    diagnostic_exported = Signal(str, bool)
     replay_result = Signal(object)
 
     def __init__(self):
@@ -4068,6 +4460,8 @@ class MainWindow(QMainWindow):
         self.update_dialog = None
         self._update_ticks = 0
         self._install_pending = False           # counting is being stopped so that an update can be installed
+        self.replay_status = {}
+        self._group_delivery = ""
         self._result_watch_until = None         # started by the updater: wait for its verdict before saying anything
         self.mode = "stopped"
         self.counts = (0, 0)
@@ -4098,6 +4492,8 @@ class MainWindow(QMainWindow):
         self.match_timer = QTimer(self)
         self.match_timer.timeout.connect(self.poll_match_log)
         self.replay_result.connect(self.apply_verified_replay)
+        self.group_delivery_status.connect(self.receive_group_delivery_status)
+        self.diagnostic_exported.connect(self.finish_diagnostic_export)
         self.auto_discord_result.connect(lambda result: self.add_log({"type": "info", "text": result}))
         self.slow = QTimer(self)
         self.slow.timeout.connect(self._tick_slow)
@@ -4596,8 +4992,10 @@ class MainWindow(QMainWindow):
             fingerprint, self._pending_match_fingerprint = self._pending_match_fingerprint, ""
             if self.quit_when_stopped or self._install_pending:
                 return
+            source = self.dashboard.source.currentData() or {}
+            fingerprint = fingerprint if source.get("source") in ("desktop", "desktop-hdr") else ""
             try:
-                started = self.start_counting(before_start=self.reset_match_source)
+                started = self.start_counting(before_start=lambda: self.reset_match_source(fingerprint))
             except (C.UserError, OSError) as error:
                 self.match_automation_failed(f"Could not reset the counter. {error}")
                 return
@@ -4606,8 +5004,9 @@ class MainWindow(QMainWindow):
                 self.match_automation_failed("Could not start the configured source.")
                 return
             self._match_active = True
-            source = self.dashboard.source.currentData() or {}
-            self._match_fingerprint = fingerprint if source.get("source") in ("desktop", "desktop-hdr") else ""
+            self._match_fingerprint = fingerprint
+            self._next_live_share = self.group._next_scoreboard_refresh = 0
+            self.dashboard.refresh_screen_overlay()
         elif action == "finish":
             self._match_active = False
             fingerprint, self._match_fingerprint = self._match_fingerprint, ""
@@ -4621,7 +5020,7 @@ class MainWindow(QMainWindow):
                 if self.pages.currentWidget() is self.group:
                     self.group.load()
 
-    def reset_match_source(self):
+    def reset_match_source(self, fingerprint=""):
         primary = self._cfg_for_actions()
         if not primary["state"]["persist"]:
             raise C.UserError("Enable saving counter state before recording matches.")
@@ -4646,7 +5045,7 @@ class MainWindow(QMainWindow):
                 try:
                     for cfg in configs:
                         path = Path(cfg["state"]["path"])
-                        reset = C.set_counts(cfg, 0, 0, "reset")
+                        reset = C.set_counts(cfg, 0, 0, "reset", match_fingerprint=fingerprint)
                         if json.loads(path.read_text(encoding="utf-8")) != reset.state:
                             raise OSError("The reset counter state was not saved.")
                 except (C.UserError, OSError, ValueError) as error:
@@ -4726,6 +5125,25 @@ class MainWindow(QMainWindow):
             except (C.UserError, OSError, profiles.ProfileError) as error:
                 show_error(self, f"Could not save the video source choice: {error}")
                 return
+        recovered = None
+        if before_start is None and cfg["state"]["persist"]:
+            path = Path(cfg["state"]["path"])
+            try:
+                with C.SingleInstance(path):
+                    state = C.load_state(path)
+                    current = (self._match_tail.active_match()
+                               if self._match_tail is not None and data["source"] in ("desktop", "desktop-hdr")
+                               else None)
+                    prior = state.get("match_fingerprint", "")
+                    if current is not None and (prior == current[0] or not state["approximate"]):
+                        recovered = current
+                    fingerprint = recovered[0] if recovered else ""
+                    if prior != fingerprint:
+                        state["match_fingerprint"] = fingerprint
+                        C.save_state(path, state)
+            except (C.UserError, OSError, ValueError) as error:
+                show_error(self, f"Could not prepare the saved match state. {error}")
+                return
         if before_start is not None:
             before_start()
         if data["source"] == "stream" and url != cfg["live"]["url"]:
@@ -4745,6 +5163,13 @@ class MainWindow(QMainWindow):
             return
         if before_start is None:
             self._match_fingerprint = ""
+            if recovered is not None:
+                self._match_fingerprint, mode = recovered
+                self._match_active = True
+                self._match_action = None
+                self._pending_match_fingerprint = ""
+                self._next_live_share = self.group._next_scoreboard_refresh = 0
+                self.set_detected_mode(mode)
         self._workers_pending.add("primary")
         whose = f" (profile {cfg['profile']['name']})" if self.dashboard.profile.count() > 1 else ""
         self.add_log({"type": "info", "text": f"Starting{whose}: {self.dashboard.source.currentText().split('   ')[0]} ..."})
@@ -4793,6 +5218,10 @@ class MainWindow(QMainWindow):
             d.metrics.hide()
             d.preview.view.setStyleSheet("")
             d.preview.clear()
+        if mode == "connecting":
+            d.capture_health.setText("Connecting to the capture source...")
+        elif not running:
+            d.capture_health.setText("No active capture.")
         self.preview_visibility_changed()
 
     def _tick(self):
@@ -5157,9 +5586,52 @@ class MainWindow(QMainWindow):
             return
         self.discord.retry_group_outbox()
 
+    def receive_group_delivery_status(self, webhook_id, status):
+        webhook = self.group._webhook
+        if webhook is not None and webhook.id == webhook_id:
+            self.set_group_delivery_status(status)
+
+    def set_group_delivery_status(self, status):
+        self._group_delivery = status
+        self.update_match_phase()
+
+    def update_match_phase(self):
+        idle = "Lobby · waiting for a match" if self._match_tail is not None else "Manual match tracking"
+        if self.mode == "connecting":
+            phase = "In match · capture connecting" if self._match_active else "Capture connecting"
+        elif self.mode == "stopping":
+            phase = "Finishing match" if self._match_action == "finish" else "Capture stopping"
+        elif self._match_active:
+            phase = "In match" if self.mode == "counting" else "In match · capture paused"
+        elif self.mode == "counting":
+            phase = "Counting manually"
+        elif self.replay_status or getattr(self.dashboard, "saved_matches", ()):
+            snapshot = self.dashboard.current_snapshot(load_cfg()[0])
+            pending = self.replay_status.get(snapshot)
+            saved = next((match for match in getattr(self.dashboard, "saved_matches", ())
+                          if match.snapshot == snapshot), None)
+            if pending == "Checking replay...":
+                phase = "Lobby · verifying replay"
+            elif saved and saved.replay:
+                phase = "Lobby · replay verified"
+            elif saved:
+                phase = f"Lobby · {pending or 'match saved'}"
+            else:
+                phase = idle
+        else:
+            phase = idle
+        if self._group_delivery:
+            phase += f"  ·  {self._group_delivery}"
+        self.dashboard.match_phase.setText(phase)
+
     def _tick_slow(self):
+        self.update_match_phase()
         self.publish_live_counts()
         self.group.sync_scoreboard()
+        floating_overlay = self.dashboard.screen_overlay
+        if ((self.workers_active() and (self.group._webhook is not None or self.group.share_matches.isChecked()))
+                or (floating_overlay is not None and floating_overlay.isVisible() and self.group._sessions)):
+            self.dashboard.refresh_screen_overlay()
         if self.group._webhook is not None and time.monotonic() >= self.discord._next_outbox_retry:
             self.discord.retry_group_outbox()
         if self._result_watch_until is not None:
@@ -5177,14 +5649,20 @@ class MainWindow(QMainWindow):
             if c.get("resolution"):
                 parts.append(f"video {c['resolution'][0]} x {c['resolution'][1]}"
                              + (f" @ {c['input_fps']:g} fps" if c.get("input_fps") else ""))
+            target = c.get("process_fps")
+            health = [f"Target {target:g} fps"] if target is not None else []
             s = self.last_status
             if s:
-                parts.append(f"analysing {s['fps']:.1f} pictures/s")
+                health.append(f"Measured {s['fps']:.1f} fps")
+                health.append(f"{fmt(s['dropped'])} frames skipped" if s.get("dropped") is not None
+                              else "Skipped frames unavailable")
+                if s.get("ms_per_frame") is not None:
+                    health.append(f"{s['ms_per_frame']:.0f} ms per frame")
                 if s.get("backlog_s") is not None:
-                    parts.append(f"backlog {s['backlog_s']:.0f} s")
-                parts.append(f"{s['ms_per_frame']:.0f} ms each")
-                if s.get("dropped"):
-                    parts.append(f"{fmt(s['dropped'])} skipped")
+                    health.append(f"Stream backlog {s['backlog_s']:.1f} s")
+            else:
+                health.append("Waiting for the first measurement.")
+            self.dashboard.capture_health.setText(" · ".join(health))
             self.dashboard.metrics.setText("   ·   ".join(parts))
             self.dashboard.metrics.show()
 
@@ -5314,7 +5792,49 @@ class MainWindow(QMainWindow):
         self.group.feedback.setText("Match saved. Use Reset on the Dashboard before the next match." if saved else
                                     "These counts have already been saved.")
 
-    def save_current_match(self, *, session_fingerprint="", verify_replay=False):
+    def recover_interrupted_match(self):
+        if self.workers_active():
+            show_notice_dialog(self, "Recover interrupted match", "Stop counting before recovering a saved match.")
+            return
+        cfg = load_cfg()[0]
+        primary = Path(cfg["state"]["path"])
+        snapshot = self.dashboard.current_snapshot(cfg)
+        try:
+            state = json.loads(primary.read_text(encoding="utf-8"))
+            fingerprint = state.get("match_fingerprint") if isinstance(state, dict) else None
+            previous = match_history.read_history(self.match_history_path())
+        except (OSError, ValueError) as error:
+            show_error(self, f"Could not read saved counts or match history. {error}")
+            return
+        if fingerprint and any(row.snapshot == snapshot or row.session_fingerprint == fingerprint for row in previous):
+            show_notice_dialog(self, "Recover interrupted match", "This match is already in Group → Match history.")
+            return
+        try:
+            finished = match_lifecycle.LogTail(match_lifecycle.local_log_path()).finished_match(fingerprint)
+        except OSError:
+            finished = None
+        if finished is None:
+            show_notice_dialog(self, "Recover interrupted match",
+                               "No matching return to the lobby was found in the current Fortnite log.")
+            return
+        ended, detected_mode = finished
+        if not ask(self, "Recover interrupted match?",
+                   f"Save the partial counts for the match that ended at {ended.astimezone():%H:%M}? "
+                   "The result stays local until verified. Replay verification and sharing follow your settings.",
+                   "Recover match"):
+            return
+        try:
+            saved = self.save_current_match(session_fingerprint=fingerprint, verify_replay=True,
+                                            recovered_finish=ended, recovered_mode=detected_mode,
+                                            expected_snapshot=snapshot)
+        except (OSError, ValueError, C.UserError) as error:
+            show_error(self, f"Could not recover the match. {error}")
+            return
+        if saved:
+            show_notice_dialog(self, "Match recovered", "Open Group → Match history to see the result and replay status.")
+
+    def save_current_match(self, *, session_fingerprint="", verify_replay=False, recovered_finish=None,
+                           recovered_mode=None, expected_snapshot=None):
         cfg, _ = load_cfg()
         if not cfg["state"]["persist"]:
             raise C.UserError("Enable saving counter state before recording matches.")
@@ -5334,8 +5854,15 @@ class MainWindow(QMainWindow):
             profile = profiles.apply(cfg)
             identity = f"{profile['id']}@{profile['created_at'] or ''}"
             snapshot, certain, total = match_history.read_snapshot(identity, state_paths)
-            if webhook and self.group_role == "guest" and self.group._host_match_settings is None:
-                session_fingerprint = ""
+            if expected_snapshot is not None and snapshot != expected_snapshot:
+                raise C.UserError("The counter changed while recovery was open. Try again.")
+            state = C.load_state(primary) if primary.is_file() else {}
+            if recovered_finish is not None:
+                if state.get("match_fingerprint") != session_fingerprint:
+                    raise C.UserError("The match changed while recovery was open. Try again.")
+                if any(row.session_fingerprint == session_fingerprint
+                       for row in match_history.read_history(self.match_history_path())):
+                    return False
             boost = self.dashboard.token_boost.currentData()
             types = read_types(primary) or {}
             breakdown = {kind: row["approx"] for kind, row in types.items()
@@ -5345,46 +5872,91 @@ class MainWindow(QMainWindow):
                 breakdown["unclassified"] = breakdown.get("unclassified", 0) + unclassified
             if sum(breakdown.values()) > total:
                 breakdown = {}
-            match = match_history.Match(snapshot, datetime.now().astimezone().strftime("%Y-%m-%d %H:%M"),
-                                        identity, profile["name"], self.current_game_mode(),
+            ended = (recovered_finish or datetime.now()).astimezone()
+            mode = self.current_game_mode() if recovered_finish is None else recovered_mode or "Unknown"
+            match = match_history.Match(snapshot, ended.strftime("%Y-%m-%d %H:%M"),
+                                        identity, profile["name"], mode,
                                         certain, total - certain, token_odds_text(total, boost), boost,
                                         player=player, chest_types=breakdown,
                                         group_webhook_id=webhook.id if webhook else "",
                                         session_fingerprint=session_fingerprint,
-                                        live_events=C.load_state(primary).get("match_events", []) if primary.is_file() else [])
+                                        recovered_partial=recovered_finish is not None,
+                                        capture_config={key: self.connected[key] for key in ("kind", "hud_scale", "process_fps")
+                                                        if key in self.connected}
+                                        if self.connected and recovered_finish is None else {},
+                                        live_events=state.get("match_events", []))
             saved = match_history.save_match(self.match_history_path(), match)
         if saved:
-            self.dashboard.set_recent_matches(match_history.read_history(self.match_history_path()))
-            if self.pages.currentWidget() is self.stats:
-                self.stats.load()
-        if saved and webhook is not None:
+            self.refresh_saved_match_views()
+        if saved and webhook is not None and not match.recovered_partial:
             try:
                 discord_group.queue_match(webhook, match, player)
             except (OSError, ValueError, sqlite3.Error) as error:
                 self.add_log({"type": "warn", "text": f"Could not queue the group contribution. {error}"})
             self.discord.retry_group_outbox()
-        if (saved and verify_replay and cfg["app"]["auto_verify_replay"]
-                and replay_comparison.reader_path().is_file()):
-            finished_at = time.time()
-
-            def verify():
-                try:
-                    result = replay_comparison.verify_local_replay(match, finished_at)
-                except (OSError, ValueError, subprocess.SubprocessError):
-                    result = None
-                self.replay_result.emit((match, webhook, result))
-
-            threading.Thread(target=verify, daemon=True).start()
-        if saved and cfg["app"]["group_share_matches"] and cfg["app"]["auto_discord_summary"]:
+        if saved and verify_replay and cfg["app"]["auto_verify_replay"]:
+            if recovered_finish is None:
+                self.start_replay_verification(match, webhook=webhook)
+            else:
+                self.start_replay_verification(match, webhook=webhook, finished_at=recovered_finish.timestamp())
+        if saved and not match.recovered_partial and cfg["app"]["group_share_matches"] and cfg["app"]["auto_discord_summary"]:
             self.deliver_saved_match(match)
         return saved
 
+    def set_replay_status(self, match, status):
+        if status:
+            self.replay_status[match.snapshot] = status
+        else:
+            self.replay_status.pop(match.snapshot, None)
+        self.group.refresh_replay_status()
+        self.update_match_phase()
+
+    def start_replay_verification(self, match, *, webhook=None, manual=False, finished_at=None):
+        if match.replay or self.replay_status.get(match.snapshot) == "Checking replay...":
+            return
+        if not replay_comparison.reader_path().is_file():
+            self.set_replay_status(match, "Replay reader unavailable")
+            return
+        if manual:
+            try:
+                finished_at = datetime.strptime(match.finished_at, "%Y-%m-%d %H:%M").timestamp() + 30
+            except ValueError:
+                self.set_replay_status(match, "Match finish time unavailable")
+                return
+            group_webhook = self.group._webhook
+            if group_webhook is not None and group_webhook.id == match.group_webhook_id:
+                webhook = group_webhook
+        elif finished_at is None:
+            finished_at = time.time()
+        self.set_replay_status(match, "Checking replay...")
+
+        def verify():
+            failure = "No matching replay found"
+            try:
+                if manual:
+                    result = replay_comparison.verify_local_replay(match, finished_at, wait_seconds=6)
+                else:
+                    result = replay_comparison.verify_local_replay(match, finished_at)
+            except (replay_comparison.ReplayAssociationError, replay_comparison.ReplayReaderUnavailable,
+                    replay_comparison.ReplayUnreadable) as error:
+                result = None
+                failure = str(error)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                result = None
+                failure = "Replay could not be verified"
+            self.replay_result.emit((match, webhook, result, manual, failure))
+
+        threading.Thread(target=verify, daemon=True, name="replay-verification").start()
+
     def apply_verified_replay(self, payload):
-        match, webhook, result = payload
-        if not load_cfg()[0]["app"]["auto_verify_replay"]:
+        match, webhook, result, *details = payload
+        manual, failure = details or (False, "Replay could not be verified")
+        if not manual and not load_cfg()[0]["app"]["auto_verify_replay"]:
+            self.set_replay_status(match, "")
             return
         if result is None:
-            self.add_log({"type": "info", "text": "Replay could not be verified. Live counts were kept."})
+            self.set_replay_status(match, failure)
+            self.add_log({"type": "info", "text": f"{failure}. Live counts were kept."})
             return
         path, identity, _, _, destroyed, timeline, owner = result
         types = {}
@@ -5398,20 +5970,33 @@ class MainWindow(QMainWindow):
                                                   token_odds_text(total, match.boost), types,
                                                   {"owner": owner, "destroyed": destroyed,
                                                    "timeline": [list(event) for event in timeline]})
-            if verified is None:
-                return
+        except (OSError, ValueError) as error:
+            self.set_replay_status(match, "Could not save replay result")
+            self.add_log({"type": "warn", "text": f"Replay kept on disk. {error}"})
+            return
+        self.set_replay_status(match, "")
+        if verified is None:
+            return
+        try:
             if webhook is not None:
+                self.set_group_delivery_status("Discord correction pending")
                 discord_group.queue_verified(webhook, verified, match.player)
                 self.discord.retry_group_outbox()
-            if load_cfg()[0]["app"]["delete_verified_replay"]:
+            if not manual and load_cfg()[0]["app"]["delete_verified_replay"]:
                 replay_comparison.delete_consumed_replay(path, identity)
         except (OSError, ValueError, sqlite3.Error) as error:
             self.add_log({"type": "warn", "text": f"Replay kept on disk. {error}"})
-        self.dashboard.set_recent_matches(match_history.read_history(self.match_history_path()))
-        if self.pages.currentWidget() is self.group:
-            self.group.load()
-        elif self.pages.currentWidget() is self.stats:
-            self.stats.load()
+        self.refresh_saved_match_views()
+        self.update_match_phase()
+
+    def refresh_saved_match_views(self):
+        current_page = self.pages.currentWidget()
+        if current_page is self.group:
+            self.group.load_history()
+        else:
+            self.dashboard.set_recent_matches(match_history.read_history(self.match_history_path()))
+            if current_page is self.stats:
+                self.stats.load()
 
     def deliver_saved_match(self, match):
         if self.group_role != "host":
@@ -5440,11 +6025,12 @@ class MainWindow(QMainWindow):
 
     def _set(self, certain, approx, action):
         try:
-            session = C.set_counts(self._cfg_for_actions(), certain, approx, action)
+            fingerprint = self._match_fingerprint if self._match_active else ""
+            session = C.set_counts(self._cfg_for_actions(), certain, approx, action, match_fingerprint=fingerprint)
         except (C.UserError, OSError) as error:
             show_error(self, str(error))
             return
-        self._match_fingerprint = ""
+        self._match_fingerprint = fingerprint
         self.primary_types = read_types(session.state_path) or C.type_breakdown(C.fresh_state())
         self.set_counts(session.state["certain"], session.state["approximate"], flash=True)
         self.refresh_types()
@@ -5454,6 +6040,52 @@ class MainWindow(QMainWindow):
         self.add_log({"type": "info", "text": f"Counter {what}."
                       + (" The running counter picks it up within a second." if self.worker.running() else "")})
 
+    def export_chest_diagnostic(self):
+        root = paths.APP_DIR / load_cfg()[0]["capture"]["dir"]
+        folder = QFileDialog.getExistingDirectory(self, "Choose a finished diagnostic capture", str(root))
+        if not folder:
+            return
+        try:
+            reports = capture_export.reports(Path(folder))
+        except (OSError, ValueError):
+            show_error(self, "Choose a finished diagnostic capture with a missed-chest report.")
+            return
+        if not reports:
+            show_error(self, "This capture has no missed-chest reports with video.")
+            return
+        dialog = PromptDialog(self, "Export chest diagnostic",
+                              "Choose a report. The ZIP contains the selected video segments, which may show names or chat.")
+        choices = MaterialComboBox()
+        for report in reports:
+            choices.addItem(f"{report['mark_id']} · {report['stamp']}", report["mark_id"])
+        dialog.content.addWidget(choices)
+        dialog.add_actions("Choose ZIP location", "Cancel")
+        if dialog.exec() != QDialog.Accepted:
+            return
+        ident = choices.currentData()
+        output, _ = QFileDialog.getSaveFileName(self, "Save chest diagnostic",
+                                                f"chest-diagnostic-{ident}.zip", "ZIP archives (*.zip)")
+        if not output:
+            return
+        self.dashboard.export_report.setEnabled(False)
+
+        def export():
+            try:
+                capture_export.export_report(Path(folder), ident, Path(output))
+            except (OSError, ValueError) as error:
+                self.diagnostic_exported.emit(str(error), False)
+            else:
+                self.diagnostic_exported.emit(output, True)
+
+        threading.Thread(target=export, daemon=True, name="chest-diagnostic-export").start()
+
+    def finish_diagnostic_export(self, result, saved):
+        self.dashboard.export_report.setEnabled(True)
+        if saved:
+            show_notice_dialog(self, "Diagnostic ZIP saved", result)
+        else:
+            show_error(self, f"Could not export the diagnostic. {result}")
+
     def mark_available(self):
         return self.mode == "counting" and self.recording is not None
 
@@ -5461,10 +6093,9 @@ class MainWindow(QMainWindow):
         """Mark button / Ctrl+Alt+M: keep the video around this moment. Only while a recording is running - without one
         there is no video to keep, and the app says so instead of pretending."""
         if self.mark_available():
-            return self.worker.send("mark")
+            return self.worker.send("mark missed chest")
         why = ("start counting first" if self.mode != "counting" else
-               "diagnostic recording is off - choose 'Only around my marks' in Dashboard > Capture settings (it keeps the 30 s before "
-               "each mark)")
+               "diagnostic recording is off - choose 'Only around my marks' in Dashboard > Capture settings (it keeps a short clip around each mark)")
         self.add_log({"type": "warn", "text": f"Mark not saved: {why}."})
         self.dashboard.rec_status.setText(f"Mark not saved: {why}.")
         self.dashboard.rec_status.setStyleSheet(f"color: {theme.WARN};")
@@ -5509,8 +6140,7 @@ class MainWindow(QMainWindow):
         elif self.mode == "counting" and mode != "off":
             d.rec_status.setText("Starting the recording...")
         elif self.mode == "counting":
-            d.rec_status.setText("Not recording. Marks need a recording: 'Only around my marks' keeps just the 30 seconds "
-                                 "before and 10 after each mark.")
+            d.rec_status.setText("Not recording. Marks need a recording: 'Only around my marks' keeps a short clip around each report.")
         elif mode != "off":
             d.rec_status.setText(f"Starts with counting: keeps {RECORDING_TEXT[mode]} (captures folder).")
         else:

@@ -38,6 +38,7 @@ from fortnite_chest_counter import paths
 
 MODES = ("off", "marks", "events", "session")
 SEGMENT_SECONDS = 10
+MISSED_CHEST_WINDOW = (6, 4)
 QUEUE_FRAMES = 30                          # ~2 s of 720p frames (~80 MB) between the counter and the encoder
 MIN_FREE_BYTES = 2 * 1024 ** 3             # do not start below 2 GB free; stop recording below 1 GB
 # Measured (docs/guides/diagnostic-capture.md): the 7-px pop-up text is so small that any lossy format moves its match score a little.
@@ -144,13 +145,14 @@ class Capture:
                 self.keep.append((rec - self.before, rec + self.after))
             self._append("events.jsonl", row)
 
-    def add_mark(self, live_t, label="mark"):
+    def add_mark(self, live_t, label="mark", diagnostics=None):
         rec = self.recording_time(live_t)
         row = {"mark_id": f"M{len(self.marks) + 1:03d}", "time": round(live_t, 3), "stamp": mmss(live_t),
                "recording_time": round(rec, 3), "label": label,
                "logged_at": datetime.now().astimezone().isoformat(timespec="seconds")}
+        if diagnostics is not None:
+            row["diagnostics"] = diagnostics
         self.marks.append(row)
-        self.keep.append((rec - self.mark_before, rec + self.mark_after))
         self._append("marks.jsonl", row)
         return row
 
@@ -195,8 +197,14 @@ class Capture:
                 pass
         return segments
 
-    def _wanted(self, start, end):
-        return self.mode == "session" or any(a < end and b > start for a, b in self.keep)
+    def _keep_ranges(self):
+        ranges = list(self.keep)
+        for mark in tuple(self.marks):
+            rec = self.recording_time(mark["time"])
+            before, after = (MISSED_CHEST_WINDOW if mark["label"] == "missed chest"
+                             else (self.mark_before, self.mark_after))
+            ranges.append((rec - before, rec + after))
+        return ranges
 
     def _cleanup(self, final=False):
         """Marks / events mode: delete finished segments nothing interesting can still claim."""
@@ -204,8 +212,9 @@ class Capture:
             return
         now = len(self.frame_times) / self.fps
         horizon = now - max(self.before + 8.0, self.mark_before) - SEGMENT_SECONDS     # events finish up to ~6 s late
+        ranges = self._keep_ranges()
         for name, start, end in self._segments():
-            if name in self.deleted or self._wanted(start, end) or (not final and end > horizon):
+            if name in self.deleted or (not final and end > horizon) or any(a < end and b > start for a, b in ranges):
                 continue
             try:
                 (self.video_dir / name).unlink()

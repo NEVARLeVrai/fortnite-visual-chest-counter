@@ -2,7 +2,7 @@
 
 from collections import Counter
 from contextlib import closing, contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
 import math
 import random
@@ -16,7 +16,7 @@ from urllib.request import Request, build_opener
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from fortnite_chest_counter import match_stats, paths, settings
+from fortnite_chest_counter import match_stats, paths, replay_comparison, settings
 from fortnite_chest_counter.detection.chest_types import LABELS
 from fortnite_chest_counter.discord_summary import _NoRedirects
 from fortnite_chest_counter.obs import credentials
@@ -77,6 +77,13 @@ CREATE TABLE IF NOT EXISTS outbox (
 );
 CREATE TABLE IF NOT EXISTS event_details (
     webhook TEXT NOT NULL, event TEXT NOT NULL, certain INTEGER, chest_types TEXT NOT NULL,
+    PRIMARY KEY(webhook, event)
+);
+CREATE TABLE IF NOT EXISTS outbox_failures (
+    webhook TEXT NOT NULL, event TEXT NOT NULL, PRIMARY KEY(webhook, event)
+);
+CREATE TABLE IF NOT EXISTS replay_outbox_details (
+    webhook TEXT NOT NULL, event TEXT NOT NULL, certain INTEGER NOT NULL, chest_types TEXT NOT NULL,
     PRIMARY KEY(webhook, event)
 );
 CREATE TABLE IF NOT EXISTS leaderboard_publications (
@@ -676,62 +683,110 @@ class GroupStore:
                        (self.webhook_id, event, *session))
 
     def queue(self, match, player):
+        with self.connection() as db:
+            return self._queue(db, match, validate_player(player))
+
+    def _queue(self, db, match, player):
         if not 0 <= match.total <= 1_000_000_000:
             raise ValueError("A Group contribution must contain 0 to 1,000,000,000 chests.")
         event = uuid4().hex
-        certain, chest_types = _validate_breakdown(match.total, getattr(match, "certain", None),
-                                                  getattr(match, "chest_types", {}))
-        with self.connection() as db:
-            result = db.execute("INSERT OR IGNORE INTO outbox VALUES (?, ?, ?, ?, ?, 0)",
-                                (self.webhook_id, match.snapshot, event, validate_player(player), match.total))
-            if result.rowcount:
-                db.execute("INSERT INTO event_details VALUES (?, ?, ?, ?)",
-                           (self.webhook_id, event, certain, json.dumps(chest_types)))
-                session = _validate_session(getattr(match, "session_fingerprint", ""), getattr(match, "boost", None))
-                self._save_session(db, event, session)
-                if session:
-                    self._save_player_state(db, session[0],
-                                            SessionPlayer(validate_player(player), certain or 0, match.total,
-                                                          session[1], True, updated_at=time.time()))
-                    db.execute("UPDATE live_outbox SET sent=1 WHERE webhook=? AND fingerprint=? AND player=?",
-                               (self.webhook_id, session[0], validate_player(player).casefold()))
-            return bool(result.rowcount)
+        certain, types = _validate_breakdown(match.total, getattr(match, "certain", None),
+                                            getattr(match, "chest_types", {}))
+        result = db.execute("INSERT OR IGNORE INTO outbox VALUES (?, ?, ?, ?, ?, 0)",
+                            (self.webhook_id, match.snapshot, event, player, match.total))
+        if result.rowcount:
+            db.execute("INSERT INTO event_details VALUES (?, ?, ?, ?)",
+                       (self.webhook_id, event, certain, json.dumps(types)))
+            session = _validate_session(getattr(match, "session_fingerprint", ""), getattr(match, "boost", None))
+            self._save_session(db, event, session)
+            if session:
+                self._save_player_state(db, session[0],
+                                        SessionPlayer(player, certain or 0, match.total,
+                                                      session[1], True, updated_at=time.time()))
+                db.execute("UPDATE live_outbox SET sent=1 WHERE webhook=? AND fingerprint=? AND player=?",
+                           (self.webhook_id, session[0], player.casefold()))
+        return bool(result.rowcount)
 
     def queue_verified(self, match, player):
+        player = validate_player(player)
+        verified_types = replay_comparison.verified_chest_types(match.replay.get("timeline"))
+        if verified_types is not None:
+            match = replace(match, certain=sum(verified_types.values()), estimated=0,
+                            chest_types=dict(verified_types))
+        if not 0 <= match.total <= 1_000_000_000:
+            raise ValueError("A Group contribution must contain 0 to 1,000,000,000 chests.")
         certain, types = _validate_breakdown(match.total, match.certain, match.chest_types)
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT event, name FROM outbox WHERE webhook=? AND snapshot=?",
+            row = db.execute("SELECT event, name, count FROM outbox WHERE webhook=? AND snapshot=?",
                              (self.webhook_id, match.snapshot)).fetchone()
-            if row is None or row[1] != validate_player(player):
-                raise ValueError("The original contribution is missing.")
-            event = row[0]
+            if row is None:
+                self._queue(db, match, player)
+                row = db.execute("SELECT event, name, count FROM outbox WHERE webhook=? AND snapshot=?",
+                                 (self.webhook_id, match.snapshot)).fetchone()
+            event, original_player, queued_total = row
+            if original_player != player:
+                raise ValueError("The original contribution belongs to a different player.")
             revision = db.execute("INSERT OR IGNORE INTO replay_revisions VALUES (?, ?, 0)",
                                   (self.webhook_id, event))
-            if not revision.rowcount:
-                return
-            db.execute("UPDATE outbox SET count=?, sent=0 WHERE webhook=? AND event=?",
-                       (match.total, self.webhook_id, event))
-            db.execute("INSERT OR REPLACE INTO event_details VALUES (?, ?, ?, ?)",
-                       (self.webhook_id, event, certain, json.dumps(types)))
+            if revision.rowcount:
+                db.execute("UPDATE outbox SET count=?, sent=0 WHERE webhook=? AND event=?",
+                           (match.total, self.webhook_id, event))
+                db.execute("DELETE FROM outbox_failures WHERE webhook=? AND event=?", (self.webhook_id, event))
+            if revision.rowcount or queued_total == match.total:
+                # Incoming live messages can still update event_details on the host.
+                db.execute("INSERT OR IGNORE INTO replay_outbox_details VALUES (?, ?, ?, ?)",
+                           (self.webhook_id, event, certain, json.dumps(types)))
 
-    def flush(self, webhook):
+    def delivery_states(self):
+        if not self.path.is_file():
+            return {}
+        with self.connection() as db:
+            rows = db.execute("""
+                SELECT o.snapshot, o.sent, f.event IS NOT NULL, r.event IS NOT NULL
+                FROM outbox o LEFT JOIN outbox_failures f ON f.webhook=o.webhook AND f.event=o.event
+                LEFT JOIN replay_revisions r ON r.webhook=o.webhook AND r.event=o.event AND r.incoming=0
+                WHERE o.webhook=?
+            """, (self.webhook_id,))
+            return {snapshot: ("Sent" if sent else "Retry needed" if failed else "Pending", bool(verified))
+                    for snapshot, sent, failed, verified in rows}
+
+    def flush(self, webhook, *, snapshot=None):
         with _FLUSH_LOCK, self.connection() as db:
             rows = db.execute("""
-                SELECT o.event, o.name, o.count, d.certain, d.chest_types, s.fingerprint, s.boost,
+                SELECT o.event, o.name, o.count, COALESCE(v.certain, d.certain),
+                    COALESCE(v.chest_types, d.chest_types), s.fingerprint, s.boost, v.event IS NOT NULL,
                     EXISTS(SELECT 1 FROM replay_revisions r WHERE r.webhook=o.webhook AND r.event=o.event AND r.incoming=0)
                 FROM outbox AS o LEFT JOIN event_details AS d ON d.webhook = o.webhook AND d.event = o.event
                 LEFT JOIN event_sessions AS s ON s.webhook = o.webhook AND s.event = o.event
-                WHERE o.webhook=? AND o.sent=0 ORDER BY o.rowid
-            """, (self.webhook_id,)).fetchall()
-            for event, name, count, certain, chest_types, fingerprint, boost, verified in rows:
+                LEFT JOIN replay_outbox_details AS v ON v.webhook = o.webhook AND v.event = o.event
+                WHERE o.webhook=? AND o.sent=0 AND (? IS NULL OR o.snapshot=?) ORDER BY o.rowid
+            """, (self.webhook_id, snapshot, snapshot)).fetchall()
+            for event, name, count, certain, chest_types, fingerprint, boost, has_replay_details, verified in rows:
                 session = (fingerprint, boost) if fingerprint else ()
-                _publish(webhook, event, name, count, certain, json.loads(chest_types or "{}"), *session,
-                         **({"verified": True} if verified else {}))
+                if verified and not has_replay_details:
+                    # The legacy outbox kept the verified total, but incoming live results
+                    # could overwrite its type breakdown.
+                    certain, types = count, {}
+                else:
+                    types = json.loads(chest_types or "{}")
+                try:
+                    _publish(webhook, event, name, count, certain, types, *session,
+                             **({"verified": True} if verified else {}))
+                except (OSError, ValueError):
+                    db.execute("""INSERT OR IGNORE INTO outbox_failures
+                        SELECT ?, ? WHERE ? =
+                        EXISTS(SELECT 1 FROM replay_revisions WHERE webhook=? AND event=? AND incoming=0)
+                    """, (self.webhook_id, event, verified, self.webhook_id, event))
+                    db.commit()
+                    raise
                 db.execute("""UPDATE outbox SET sent=1 WHERE webhook=? AND event=? AND ? =
                     EXISTS(SELECT 1 FROM replay_revisions r WHERE r.webhook=outbox.webhook
                            AND r.event=outbox.event AND r.incoming=0)""", (self.webhook_id, event, verified))
+                db.execute("DELETE FROM outbox_failures WHERE webhook=? AND event=?", (self.webhook_id, event))
                 db.commit()
+            if snapshot is not None:
+                return len(rows)
             live_rows = db.execute(
                 "SELECT fingerprint, player, name, revision, certain, total, boost, message FROM live_outbox "
                 "WHERE webhook=? AND sent=0 ORDER BY rowid", (self.webhook_id,)).fetchall()
@@ -880,6 +935,17 @@ def queue_verified(webhook, match, player):
     GroupStore(webhook.id).queue_verified(match, player)
 
 
-def flush(webhook):
+def flush(webhook, *, snapshot=None):
     store = GroupStore(webhook.id)
-    return store.flush(webhook) if store.path.is_file() else 0
+    return store.flush(webhook, snapshot=snapshot) if store.path.is_file() else 0
+
+def has_pending_verified(webhook):
+    store = GroupStore(webhook.id)
+    if not store.path.is_file():
+        return False
+    with store.connection() as db:
+        return db.execute("""
+            SELECT 1 FROM outbox AS o JOIN replay_revisions AS r
+                ON r.webhook=o.webhook AND r.event=o.event AND r.incoming=0
+            WHERE o.webhook=? AND o.sent=0 LIMIT 1
+        """, (webhook.id,)).fetchone() is not None

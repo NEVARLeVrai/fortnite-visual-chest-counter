@@ -754,7 +754,7 @@ def test_mark_button_and_hotkey_need_a_running_recording():
             assert win.dashboard.rec_mode.currentData() == "session" and fake.sent == ["capture marks"]   # shown, not re-sent
             win.handle({"type": "capture", "state": "recording", "mode": "marks", "folder": "X"})
             assert win.dashboard.rec_mode.currentData() == "marks"
-            assert win.dashboard.mark.isEnabled() and win.mark_moment() is True and fake.sent[-1] == "mark"
+            assert win.dashboard.mark.isEnabled() and win.mark_moment() is True and fake.sent[-1] == "mark missed chest"
             win.handle({"type": "mark", "stamp": "01:02.00", "recorded": True})
             assert "Marked 01:02.00" in win.dashboard.rec_status.text()
             win.handle({"type": "capture", "state": "saved", "folder": "OTHER"})            # an older recording finishing
@@ -762,7 +762,7 @@ def test_mark_button_and_hotkey_need_a_running_recording():
             win.handle({"type": "capture", "state": "saved", "folder": "X"})
             assert win.recording is None and not win.dashboard.mark.isEnabled()
             win.handle({"type": "capture", "state": "off", "mode": "events"})                  # a start that failed
-            assert win.dashboard.rec_mode.currentData() == "off" and fake.sent[-1] == "mark"  # shown honestly, not re-sent
+            assert win.dashboard.rec_mode.currentData() == "off" and fake.sent[-1] == "mark missed chest"  # shown honestly, not re-sent
             C.update_config_file(Path(tmp) / "config.toml", "logging", {
                 "enabled": True, "save_snapshots": True, "log_candidates": True})
             win.settings_page.load()
@@ -1080,3 +1080,59 @@ if __name__ == "__main__":
             print(f"FAIL  {t.__name__}: {error!r}")
     print(f"{len(tests) - failed}/{len(tests)} app checks passed")
     raise SystemExit(1 if failed else 0)
+
+def test_missed_chest_mark_uses_short_window_and_capture_metrics(monkeypatch):
+    from fortnite_chest_counter.capture import Capture
+
+    capture = Capture.__new__(Capture)
+    capture.marks, capture.keep = [], []
+    capture.mark_before, capture.mark_after = 30, 10
+    monkeypatch.setattr(capture, "recording_time", lambda live_t: live_t)
+    saved = []
+    monkeypatch.setattr(capture, "_append", lambda name, row: saved.append((name, row)))
+    metrics = {"hud_scale": 0.73, "target_fps": 15, "measured_fps": 13.7, "skipped_frames": 0}
+    capture.add_mark(24, "missed chest", metrics)
+    capture.add_mark(24)
+    assert capture._keep_ranges() == [(18, 28), (-6, 34)]
+    # The rolling encoder may still be behind when the mark is created.
+    monkeypatch.setattr(capture, "recording_time", lambda live_t: live_t + 3)
+    assert capture._keep_ranges() == [(21, 31), (-3, 37)]
+    assert saved[0][0] == "marks.jsonl" and saved[0][1]["diagnostics"] == metrics
+    assert "diagnostics" not in saved[1][1]
+
+def test_export_chest_diagnostic_keeps_only_the_selected_segments(tmp_path):
+    import json
+    from zipfile import ZipFile
+    from fortnite_chest_counter import capture_export
+
+    video = tmp_path / "video"
+    video.mkdir()
+    (tmp_path / "capture.json").write_text(json.dumps({
+        "ended_at": "finished", "fps": 15, "app": {"version": "0.3.4", "source": "private URL"},
+    }), encoding="utf-8")
+    (tmp_path / "marks.jsonl").write_text(json.dumps({
+        "mark_id": "M001", "label": "missed chest", "clip": "video/session.ffconcat",
+        "recording_time": 17, "stamp": "00:17.00",
+        "diagnostics": {"hud_scale": 0.73, "measured_fps": 13.7},
+    }) + "\n", encoding="utf-8")
+    (tmp_path / "events.jsonl").write_text(
+        '\n'.join(json.dumps({"recording_time": t, "popup_score": 0.8}) for t in (1, 15, 25, 35)),
+        encoding="utf-8",
+    )
+    (video / "segments.csv").write_text(
+        "".join(f"seg_{i:05}.mkv,{10 * i},{10 * (i + 1)}\n" for i in range(4)), encoding="utf-8",
+    )
+    for i in range(4):
+        (video / f"seg_{i:05}.mkv").write_bytes(bytes([i]))
+    (tmp_path / "config.toml").write_text("private configuration", encoding="utf-8")
+    output = tmp_path / "report.zip"
+    capture_export.export_report(tmp_path, "M001", output)
+    with ZipFile(output) as archive:
+        assert set(archive.namelist()) == {
+            "report.json", "decisions.jsonl", "video/report.ffconcat", "video/seg_00001.mkv", "video/seg_00002.mkv",
+        }
+        report = json.loads(archive.read("report.json"))
+        assert report["seconds_into_clip"] == 7
+        assert report["version"] == "0.3.4" and report["diagnostics"]["measured_fps"] == 13.7
+        assert "private" not in archive.read("report.json").decode()
+        assert [json.loads(row)["recording_time"] for row in archive.read("decisions.jsonl").splitlines()] == [15, 25]

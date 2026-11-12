@@ -23,7 +23,7 @@ logging switches; saved diagnostic files remain available. Text logging can be e
 * App: Dashboard -> **Diagnostic recording** (Off / only around my marks / around chest decisions and marks / whole
   session) - switchable while counting: the worker gets `capture <mode>` on its control pipe, the old recording finishes
   in a background thread (its encoder flush never holds up counting) and the new one starts in its own folder. Press
-  **Ctrl+Alt+M** (global hotkey, works while Fortnite has the focus) or **Mark moment** right after a miss; both are
+  **Ctrl+Alt+M** (global hotkey, works while Fortnite has the focus) or **Report missed chest** right after a miss; both are
   available only while a recording runs (without one there is no video to keep, so the app says so instead).
   Settings -> **Review captures...** runs `review --gui`: capture N of M, video done / total, time left from measured
   throughput (`progress.py`: no estimate until a few seconds and a few percent are measured), Stop, failed/finished state.
@@ -40,7 +40,7 @@ stops recording below 1 GB. One folder per session (layout in `capture.py`'s doc
 (10-s segments, `clips.json`, an `.ffconcat` playlist per clip), `timeline.csv` (recording frame -> live time),
 `events.jsonl`, `marks.jsonl`, `labels.csv`, `README.txt`.
 
-Marks mode keeps, per mark, `mark_before_seconds` (30) / `mark_after_seconds` (10) - a mark is pressed after the miss.
+Console marks use `mark_before_seconds` (30) and `mark_after_seconds` (10) by default. The app’s missed-chest report uses six seconds before and four seconds after.
 Events mode also keeps, per chest decision, `before_seconds` (10) / `after_seconds` (10). In both, segments nothing claims
 are deleted about 40 s after they were recorded (a rolling buffer of ~50 s on disk: ~140 MB standard, ~300 MB lossless).
 
@@ -85,3 +85,10 @@ the evidence windows (prompt history 2.5 s, popup look-ahead 1 s, prompt finish 
 Collect sessions from different sources (OBS feed, capture card, YouTube / Twitch VODs, low bitrates), label them, and keep
 them outside Git (they are large). A future `research/` harness can then run `review` over the whole set and diff against
 a stored result, the same way `regress.py` guards the two original recordings today.
+
+
+### Report a missed chest
+
+In Dashboard → Capture settings, select **Only around my marks**. While counting, use **Report missed chest** in Capture health or press **Ctrl+Alt+M** just after the opening. This marks six seconds before and four seconds after the report. Clips retain the intersecting video segments, so the exported clip can be longer. Each report stores the HUD scale detected by the worker, the target and latest measured analysis FPS, and the skipped-frame count in `marks.jsonl`. The rolling recorder requires explicit activation and stays off by default.
+
+After stopping the recording, use **Dashboard → Capture health → Export chest diagnostic**. Select the finished capture folder and the report to create a ZIP containing its video segments, the corresponding detection decisions and a small report with the app version and capture measurements. The video can show in-game names or chat. The ZIP excludes your app configuration and session logs.

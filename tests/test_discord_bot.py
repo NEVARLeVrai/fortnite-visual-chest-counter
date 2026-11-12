@@ -148,6 +148,7 @@ def test_guild_registration_and_runtime_permission_check(tmp_path, monkeypatch):
         await bot.on_ready()
         assert store.stats().total == 8
         assert store.cursor(feed.id) == 101
+        assert all(stage in bot.connection_timing for stage in ("Setup", "Commands", "Gateway", "History", "Live recovery"))
         assert store.cursor(channel.id) == 0
 
         calls = []
@@ -611,6 +612,32 @@ def test_published_board_moves_updates_resumes_and_deletes(tmp_path, monkeypatch
     asyncio.run(verify())
 
 
+def test_live_recovery_fetches_in_bounded_batches(tmp_path, monkeypatch):
+    async def verify():
+        store = discord_group.GroupStore(WEBHOOK.id, tmp_path / "group.db")
+        bot = discord_bot.GuildBot(CONFIG, store, lambda *_: None, WEBHOOK)
+        active = peak = 0
+        ingested = []
+
+        async def fetch_message(ident):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0)
+            active -= 1
+            return SimpleNamespace(id=ident, webhook_id=int(WEBHOOK.id))
+
+        bot.feed_channel = SimpleNamespace(id=345, fetch_message=fetch_message)
+        monkeypatch.setattr(store, "live_messages", lambda _: tuple(range(9)))
+        monkeypatch.setattr(store, "ingest", lambda message: ingested.append(message.id))
+        await bot._refresh_live_messages()
+        assert peak == 4
+        assert ingested == list(range(9))
+        await bot.close()
+
+    asyncio.run(verify())
+
+
 def test_edited_live_message_bypasses_history_cursor_and_authenticates_webhook(tmp_path):
     async def verify():
         store = discord_group.GroupStore(WEBHOOK.id, tmp_path / "group.db")
@@ -887,8 +914,16 @@ def test_replay_updates_one_group_contribution(tmp_path, monkeypatch, verified_f
     monkeypatch.setattr(discord_group, "_publish", publish)
     assert guest.queue(match, "Rin")
     assert guest.flush(WEBHOOK) == 1
-    guest.queue_verified(replace(match, certain=9, estimated=0, chest_types={"buried": 2}), "Rin")
+    corrected = replace(match, certain=9, estimated=0, chest_types={"buried": 2})
+    guest = discord_group.GroupStore(WEBHOOK.id, guest.path)
+    guest.queue_verified(corrected, "Rin")
+    # A host can ingest its initial webhook post after queueing the correction.
+    assert guest.ingest(messages[0])
     assert guest.flush(WEBHOOK) == 1
+    guest = discord_group.GroupStore(WEBHOOK.id, guest.path)
+    guest.queue_verified(corrected, "Rin")
+    assert guest.flush(WEBHOOK) == 0
+    assert discord_group._parse_event(messages[0].content)[0] == discord_group._parse_event(messages[1].content)[0]
     viewer = discord_group.GroupStore(WEBHOOK.id, tmp_path / "viewer.db")
     if verified_first:
         messages.reverse()
@@ -904,3 +939,67 @@ def test_replay_updates_one_group_contribution(tmp_path, monkeypatch, verified_f
     session, = viewer.sessions()
     assert session.total == 9 and session.certain == 9
     assert session.chance_percent == row.token_chance == host.team_summary().chance_percent
+
+
+def test_verified_outbox_recovers_without_original_row(tmp_path, monkeypatch):
+    path = tmp_path / "group.db"
+    verified = match_history.Match("snapshot", "2026-11-10 10:00", "default", "Capture", "Duo",
+                                   31, 0, "1%", chest_types={"chest": 31})
+    sent = []
+
+    def publish(_webhook, event, name, total, certain, types, *, verified):
+        sent.append((event, name, total, certain, types, verified))
+        if len(sent) == 1:
+            raise OSError("Response lost after acceptance")
+
+    monkeypatch.setattr(discord_group, "_publish", publish)
+    first = discord_group.GroupStore(WEBHOOK.id, path)
+    first.queue_verified(verified, "Rin")
+    with pytest.raises(OSError, match="Response lost"):
+        first.flush(WEBHOOK)
+
+    restarted = discord_group.GroupStore(WEBHOOK.id, path)
+    restarted.queue_verified(verified, "Rin")
+    assert restarted.flush(WEBHOOK) == 1
+    assert sent[0] == sent[1]
+    assert sent[1][1:] == ("Rin", 31, 31, {"chest": 31}, True)
+    assert restarted.flush(WEBHOOK) == 0
+
+def test_legacy_replay_outbox_sends_verified_total_when_live_details_are_stale(tmp_path, monkeypatch):
+    store = discord_group.GroupStore(WEBHOOK.id, tmp_path / "group.db")
+    live = match_history.Match("snapshot", "2026-11-10 10:00", "default", "Capture", "Duo",
+                               9, 3, "1%", chest_types={"chest": 12})
+    store.queue(live, "Rin")
+    with store.connection() as db:
+        event, = db.execute("SELECT event FROM outbox").fetchone()
+        db.execute("INSERT INTO replay_revisions VALUES (?, ?, 0)", (WEBHOOK.id, event))
+        db.execute("UPDATE outbox SET count=9 WHERE event=?", (event,))
+    sent = []
+    monkeypatch.setattr(discord_group, "_publish", lambda _webhook, *args, **flags: sent.append((args, flags)))
+    assert store.flush(WEBHOOK) == 1
+    assert sent == [((event, "Rin", 9, 9, {}), {"verified": True})]
+
+def test_retry_selected_match_persists_status_and_skips_other_matches(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    path = tmp_path / "group.db"
+    store = discord_group.GroupStore(WEBHOOK.id, path)
+    first = match_history.Match("first", "2026-11-10 10:00", "default", "Capture", "Duo", 2, 0, "0%")
+    store.queue(first, "Rin")
+    store.queue(replace(first, snapshot="second"), "Rin")
+    sent = []
+
+    def publish(_webhook, event, *_args, **_flags):
+        sent.append(event)
+        if len(sent) == 1:
+            raise OSError("offline")
+
+    monkeypatch.setattr(discord_group, "_publish", publish)
+    with pytest.raises(OSError, match="offline"):
+        store.flush(WEBHOOK, snapshot="second")
+    reopened = discord_group.GroupStore(WEBHOOK.id, path)
+    assert reopened.delivery_states() == {"first": ("Pending", False), "second": ("Retry needed", False)}
+    assert reopened.flush(WEBHOOK, snapshot="second") == 1
+    assert reopened.flush(WEBHOOK, snapshot="second") == 0
+    assert sent[0] == sent[1]
+    assert reopened.delivery_states() == {"first": ("Pending", False), "second": ("Sent", False)}

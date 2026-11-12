@@ -33,7 +33,8 @@ def final_message(total, message_id=102):
                            content=f"||FCC1 {content}||", embeds=[embed])
 
 
-def test_live_revisions_update_one_session_and_final_dominates(tmp_path):
+def test_live_revisions_update_one_session_and_final_dominates(tmp_path, monkeypatch):
+    monkeypatch.setattr(group.time, "time", lambda: 1794340000.0)
     store = group.GroupStore(WEBHOOK.id, tmp_path / "group.db")
     assert store.ingest(live_message(1, 2))
     store.advance_cursor(CHANNEL.id, 101)

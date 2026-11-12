@@ -374,8 +374,11 @@ class CounterSession:
         estimator.flush()                       # discard pre-reset detections without rearming visual onset detectors
         estimator.take_type_updates()
         previous = {"certain": self.state["certain"], "approximate": self.state["approximate"]}
+        fingerprint = self.state.get("match_fingerprint")
         self.state.clear()
         self.state.update(fresh_state())
+        if fingerprint:
+            self.state["match_fingerprint"] = fingerprint
         self.recent.clear()
         self._reset_pending_ack = True
         self.save()
@@ -1195,9 +1198,9 @@ def _open_capture(cfg, kind, label, res, in_fps, fps, mode=None):
     return capture
 
 
-def _mark(session, capture, t, label):
+def _mark(session, capture, t, label, diagnostics=None):
     """A moment the user flagged (usually: 'the counter missed a chest just now')."""
-    row = capture.add_mark(t, label) if capture is not None else {"time": round(t, 3), "stamp": mmss(t), "label": label}
+    row = capture.add_mark(t, label, diagnostics) if capture is not None else {"time": round(t, 3), "stamp": mmss(t), "label": label}
     session.log.write({"event": "mark", **row, "recorded": capture is not None, "logged_at": now_iso()})
     CONSOLE.emit("mark", stamp=row["stamp"], label=label, recorded=capture is not None, mark_id=row.get("mark_id"))
     if not CONSOLE.machine:
@@ -1264,9 +1267,10 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
     CONSOLE.info((f"Connected: video {res[0]}x{res[1]} @ {in_fps} fps" if res else "Connected.")
                  + f" -> analysed at {fps} frames per second")
     friendly_rate_note(res, kind)
+    local_hud_scale = paths.local_fortnite_hud_scale() if kind in ("desktop", "desktop-hdr", "window") else None
     if control is not None:
         CONSOLE.emit("connected", source=source.label, kind=kind, resolution=res, input_fps=in_fps, process_fps=fps,
-                     settings=origin, continuing=session.loaded_existing, persist=session.persist,
+                     hud_scale=local_hud_scale, settings=origin, continuing=session.loaded_existing, persist=session.persist,
                      obs_file=str((session.obs_dir / "chest_counter.txt").resolve()),
                      log=str(session.log.path) if session.log.path else None)
         session.announce()
@@ -1283,7 +1287,6 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
         print("To stop: press Q in this window (or Ctrl+C, or just close the window). Nothing is lost.")
         CONSOLE.line(f"Window: {CONSOLE.verbosity} detail, colours {'on' if CONSOLE.colors else 'off'} ([console] in config.toml)\n", "dim")
 
-    local_hud_scale = paths.local_fortnite_hud_scale() if kind in ("desktop", "desktop-hdr", "window") else None
     est = estimator.ChestEstimator(hud_scale=local_hud_scale)
     if local_hud_scale is not None:
         CONSOLE.info(f"Fortnite HUD: {local_hud_scale:.0%} (local settings); "
@@ -1308,6 +1311,7 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
     last_sync = last_status_log = time.monotonic()
     watcher = DisplayConfigWatcher(args)
     processed_at_status = processed_at_log = 0
+    det_fps = None
     stop_reason = "stream ended"
     capture_warned = False
     if guard is not None:
@@ -1359,7 +1363,12 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
                     break
                 marks += ["mark"] if "m" in keys else []
             for label in marks:
-                _mark(session, capture, t, label)
+                diagnostics = None
+                if label == "missed chest" and capture is not None:
+                    diagnostics = {"hud_scale": local_hud_scale, "target_fps": fps,
+                                   "measured_fps": round(det_fps, 1) if det_fps is not None else None,
+                                   "skipped_frames": source.frames_dropped}
+                _mark(session, capture, t, label, diagnostics)
             if now_m - last_sync >= 1.0:
                 last_sync = now_m
                 for level, note in getattr(source, "take_notices", list)():     # e.g. the projector window was minimized
@@ -1777,7 +1786,7 @@ def cmd_set_count(args):
         CONSOLE.info("The counter window is open: it picks up the new numbers within a second.")
 
 
-def set_counts(cfg, certain, approx, action="set_count"):
+def set_counts(cfg, certain, approx, action="set_count", *, match_fingerprint=None):
     """The desktop app's Reset / Edit counts. Same file, OBS files and log record as the reset / set-count commands, so
     a running counter adopts the new numbers within a second (CounterSession.sync_external_changes). -> the session."""
     for value in (certain, approx):
@@ -1792,6 +1801,8 @@ def set_counts(cfg, certain, approx, action="set_count"):
     session = CounterSession(cfg, reset=(action == "reset"))
     st = session.state
     st["certain"], st["approximate"] = certain, approx
+    if match_fingerprint is not None:
+        st["match_fingerprint"] = match_fingerprint
     if action != "reset":
         st["events_logged"] += 1
     session.save()

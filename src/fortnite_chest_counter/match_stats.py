@@ -60,6 +60,18 @@ def team(session, player, *, current=None):
     return Summary(result.certain, result.total, result.log_no_drop, tuple(names.values()), 1, member_totals)
 
 
+def member_freshness(member, now):
+    if member.finished:
+        return "Final result"
+    if not member.updated_at:
+        return "Update time unavailable"
+    seconds = max(0, int(now - member.updated_at))
+    if seconds < 5:
+        return "Live · updated just now"
+    age = f"{seconds // 5 * 5}s" if seconds < 60 else f"{seconds // 60}m"
+    return f"Last update {age} ago" if seconds >= 45 else f"Live · updated {age} ago"
+
+
 def saved_team(match, sessions, webhook_id):
     if not match.session_fingerprint or not match.group_webhook_id or match.group_webhook_id != webhook_id:
         return None
@@ -91,3 +103,31 @@ def cumulative(matches, sessions, webhook_id, *, snapshot="", certain=0, total=0
         else:
             result += personal(certain, total, boost)
     return result
+
+
+def capture_label(config):
+    kind = config.get("kind")
+    source = {"desktop": "Screen · SDR", "desktop-hdr": "Screen · HDR → SDR", "window": "Window",
+              "device": "Capture device", "stream": "Stream", "file": "Video file"}.get(kind) if isinstance(kind, str) else None
+    if not source:
+        return "Unknown configuration"
+    hud, fps = config.get("hud_scale"), config.get("process_fps")
+    if type(hud) in (int, float) and math.isfinite(hud):
+        source += f" · HUD {hud:.0%}"
+    if type(fps) in (int, float) and math.isfinite(fps):
+        source += f" · {fps:g} fps"
+    return source
+
+
+def capture_comparison(matches):
+    results = {}
+    for match in matches:
+        key = capture_label(match.capture_config)
+        totals = results.setdefault(key, [0, 0, 0])
+        totals[0] += 1
+        direct = match.replay.get("direct") if match.replay else {"chest_types": match.chest_types}
+        types = direct.get("chest_types") if isinstance(direct, dict) else None
+        if isinstance(types, dict) and all(type(count) is int and count >= 0 for count in types.values()):
+            totals[1] += sum(count for kind, count in types.items() if kind != "unclassified")
+            totals[2] += types.get("unknown", 0)
+    return dict(sorted(results.items()))

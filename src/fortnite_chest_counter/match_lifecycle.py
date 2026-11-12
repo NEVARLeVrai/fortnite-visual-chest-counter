@@ -1,9 +1,10 @@
 """Recognize local Battle Royale boundaries in newly appended Fortnite log data."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from hashlib import sha256
 import os
 import re
+import time
 from pathlib import Path
 
 
@@ -132,6 +133,89 @@ class LogTail:
                 mode = match[1].decode("ascii").capitalize().removesuffix("s") if match else None
                 self._playlist = self._line_number, stamp, int(frame), mode
         return restarted, events
+
+    def _recent_lines(self, *, fresh_at=None, limit=16 * 1024 * 1024):
+        try:
+            with self.path.open("rb") as stream:
+                info = os.fstat(stream.fileno())
+                if fresh_at is not None and not 0 <= fresh_at - info.st_mtime <= 60:
+                    return []
+                offset = max(0, info.st_size - limit)
+                stream.seek(offset)
+                if offset:
+                    stream.readline(self.LINE_LIMIT)
+                return stream.read(max(0, info.st_size - stream.tell())).split(b"\n")[:-1]
+        except OSError:
+            return []
+
+    def _warmup_identity(self, lines, index, start):
+        fingerprint = mode = None
+        saw_session = saw_playlist = False
+        for earlier in reversed(lines[max(0, index - _SESSION_LINES):index]):
+            earlier = earlier.rstrip(b"\r")
+            if _START.fullmatch(earlier) or _FRONTEND.fullmatch(earlier):
+                break
+            session = _SESSION.fullmatch(earlier)
+            if session and not saw_session:
+                saw_session = True
+                moment, frame, ident = session.groups()
+                fingerprint = self._start_metadata(start, (0, moment, int(frame), sha256(ident.lower()).hexdigest()))
+            playlist = _PLAYLIST.fullmatch(earlier)
+            if playlist and not saw_playlist:
+                saw_playlist = True
+                moment, frame, ident = playlist.groups()
+                matched = _BR_PLAYLIST.fullmatch(ident)
+                if matched:
+                    name = matched[1].decode("ascii").capitalize().removesuffix("s")
+                    mode = self._start_metadata(start, (0, moment, int(frame), name))
+        return fingerprint, mode
+
+    def active_match(self, *, now=None):
+        """Look for a recent, identified warmup when counting starts mid-match."""
+        now = time.time() if now is None else now
+        lines = self._recent_lines(fresh_at=now)
+        for index in range(len(lines) - 1, -1, -1):
+            line = lines[index].rstrip(b"\r")
+            if _FRONTEND.fullmatch(line):
+                return None
+            start = _START.fullmatch(line)
+            if not start:
+                continue
+            started = self._marker_time(start)
+            if started is None or not 0 <= now - started.timestamp() <= 45 * 60:
+                return None
+            fingerprint, mode = self._warmup_identity(lines, index, start)
+            return (fingerprint, mode) if fingerprint else None
+        return None
+
+    def finished_match(self, fingerprint):
+        """Find a timestamped lobby return after this exact warmup and before the next warmup."""
+        if not fingerprint:
+            return None
+        lines = self._recent_lines()
+        finished = None
+        for index in range(len(lines) - 1, -1, -1):
+            line = lines[index].rstrip(b"\r")
+            if frontend := _FRONTEND.fullmatch(line):
+                finished = self._marker_time(frontend)
+            elif start := _START.fullmatch(line):
+                if finished is not None:
+                    identity, mode = self._warmup_identity(lines, index, start)
+                    started = self._marker_time(start)
+                    if identity == fingerprint and started is not None and started <= finished:
+                        return finished, mode
+                finished = None
+        return None
+
+    @staticmethod
+    def _marker_time(marker):
+        stamp = marker.group(1)
+        if stamp is not None:
+            try:
+                return _timestamp(stamp).replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+        return None
 
     @staticmethod
     def _start_metadata(start, candidate):

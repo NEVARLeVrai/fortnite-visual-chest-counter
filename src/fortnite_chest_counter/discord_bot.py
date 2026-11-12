@@ -288,6 +288,11 @@ class GuildBot(discord.Client):
         self._feed_lock = asyncio.Lock()
         self._feed_ready = False
         self._connection_epoch = 0
+        self._connection_started = time.monotonic()
+        self._gateway_started = None
+        self._command_seconds = None
+        self._setup_seconds = None
+        self.connection_timing = ""
         self.failure = None
         self._publication_lock = asyncio.Lock()
         self._last_board = None
@@ -299,6 +304,8 @@ class GuildBot(discord.Client):
         self._presence_updated = None
 
     async def setup_hook(self):
+        setup_started = time.monotonic()
+        self._status_changed("connecting", "Checking Discord setup and commands…")
         if self.config.application_id and int(self.config.application_id) != self.application_id:
             raise _SetupError("The bot token does not match the saved Application ID.")
         if self.webhook:
@@ -321,13 +328,21 @@ class GuildBot(discord.Client):
         guild = discord.Object(self.feed_channel.guild.id)
         register_commands(self.tree, guild, self.totals, lambda: self._feed_ready, self.publish_board,
                           lambda: self.board_settings)
+        commands_started = time.monotonic()
         for command in self.tree.get_commands(guild=guild):
             # Guild POST upserts this name/type. Bulk sync would delete unrelated commands.
             await self.http.upsert_guild_command(self.application_id, guild.id, command.to_dict(self.tree))
+        self._gateway_started = time.monotonic()
+        self._setup_seconds = commands_started - setup_started
+        self._command_seconds = self._gateway_started - commands_started
+        self._status_changed("connecting", "Waiting for the Discord Gateway…")
 
     async def on_ready(self):
         epoch = self._connection_epoch
+        ready_at = time.monotonic()
+        history_seconds = live_seconds = 0.0
         if self.feed_channel is not None:
+            self._status_changed("connecting", "Connected to Discord. Synchronizing Group history…")
             cached_channel = self.get_channel(self.feed_channel.id)
             if cached_channel is not None and cached_channel.guild.me is not None:
                 permissions = cached_channel.permissions_for(cached_channel.guild.me)
@@ -336,8 +351,11 @@ class GuildBot(discord.Client):
                     await self.close()
                     return
             await self._catch_up()
+            history_end = time.monotonic()
+            history_seconds = history_end - ready_at
             if not self.failure:
                 await self._refresh_live_messages()
+                live_seconds = time.monotonic() - history_end
         if not self.failure and epoch == self._connection_epoch:
             self._feed_ready = True
             try:
@@ -345,6 +363,12 @@ class GuildBot(discord.Client):
                 self.published_channel = target[0] if target else ""
             except (OSError, sqlite3.Error):
                 self.publication_status = "Could not load the published leaderboard. Check local state."
+            timings = [("Setup", self._setup_seconds), ("Commands", self._command_seconds),
+                       ("Gateway", ready_at - self._gateway_started if self._gateway_started is not None else None),
+                       ("History", history_seconds), ("Live recovery", live_seconds)]
+            elapsed = time.monotonic() - self._connection_started
+            steps = " · ".join(f"{name} {seconds:.1f}s" for name, seconds in timings if seconds is not None)
+            self.connection_timing = f"Connection {elapsed:.1f}s · {steps}"
             self._status_changed("online", f"Connected as {self.user}.")
             if not self.refresh_board.is_running():
                 self.refresh_board.start()
@@ -566,6 +590,9 @@ class GuildBot(discord.Client):
 
     async def on_disconnect(self):
         self._connection_epoch += 1
+        self._connection_started = self._gateway_started = time.monotonic()
+        self._command_seconds = self._setup_seconds = None
+        self.connection_timing = ""
         self._feed_ready = False
         self._status_changed("connecting", "Reconnecting to Discord…")
 
@@ -575,16 +602,21 @@ class GuildBot(discord.Client):
             await self._catch_up(through=message)
 
     async def _refresh_live_messages(self):
+        async def fetch(ident):
+            try:
+                return await self.feed_channel.fetch_message(ident)
+            except discord.NotFound:
+                return None
+
         async with self._feed_lock:
             try:
                 identifiers = await asyncio.to_thread(self.totals.live_messages, self.feed_channel.id)
-                for ident in identifiers:
-                    try:
-                        message = await self.feed_channel.fetch_message(ident)
-                    except discord.NotFound:
-                        continue
-                    if str(message.webhook_id) == self.totals.webhook_id:
-                        await asyncio.to_thread(self.totals.ingest, message)
+                batch_size = 4
+                for start in range(0, len(identifiers), batch_size):
+                    messages = await asyncio.gather(*(fetch(ident) for ident in identifiers[start:start + batch_size]))
+                    for message in messages:
+                        if message is not None and str(message.webhook_id) == self.totals.webhook_id:
+                            await asyncio.to_thread(self.totals.ingest, message)
             except (discord.HTTPException, OSError, ValueError, sqlite3.Error):
                 self.failure = "Could not recover live Group updates. Check the feed channel and local state."
                 self._feed_ready = False
@@ -657,6 +689,11 @@ class BotRunner:
 
     def start(self):
         self._thread.start()
+
+    @property
+    def connection_timing(self):
+        with self._lock:
+            return getattr(self._client, "connection_timing", "") if self._client is not None else ""
 
     def channels(self):
         with self._lock:

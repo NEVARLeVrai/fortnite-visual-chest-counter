@@ -25,6 +25,8 @@ Guests with sharing enabled follow the Host's published mode and boost. Turning 
 
 ## Live sessions and history
 
+Live team totals refresh while counting or while the floating overlay is visible, including when a Guest uses another page. The Host can still show team updates already received during a temporary Discord publication cooldown. If you open the app mid-match, start counting with an empty counter and match automation enabled. A recent, identified local warmup can link the capture to that match. The Team overlay shows when each teammate last updated their count, or that their result is finished. During capture, it also shows why it is waiting when a match ID or teammate update is missing.
+
 Live sharing applies to a local Battle Royale match with a verified session fingerprint. The app queues the latest counts every five to eight seconds, with a per-client stagger and small random variation so players do not all send together. It coalesces unsent changes and updates the same live webhook message. A saved match supplies the final result. Retries update that player's result instead of adding the same chests again. Webhook submissions and shared-board requests share a cooldown: Discord’s `Retry-After` / `retry_after` and exhausted-bucket reset delays are respected. Pending results stay queued during the pause; the app does not block the UI or loop on HTTP 429. The bot’s authenticated requests also use discord.py’s rate-limit handling. See [Discord’s rate-limit documentation](https://docs.discord.com/developers/topics/rate-limits).
 
 Matching Fortnite session fingerprints group teammates even when they leave at different times. The app sends the fingerprint, player name, confidence counts and boost, rather than the raw Fortnite log. Team membership is based on received submissions from that session. Players in another match stay in their own session.
@@ -32,6 +34,8 @@ Matching Fortnite session fingerprints group teammates even when they leave at d
 The history keeps your personal counts. For a verified shared match with another submitted player, it also shows **Team players**, **Team total** and **Team chance**. Those extra columns stay empty for private or unverified matches and when no teammate has contributed. An incomplete team total includes only received counts.
 
 ## Bot setup and permissions
+
+The bot status distinguishes command setup, waiting for Discord, and catching up with Group history. On reconnect, the bot also recovers recent live messages edited while it was offline. Once connected, Bot setup shows the measured durations for the Gateway, history catch-up and live recovery. The initial connection also lists setup and command registration time.
 
 1. In the [Discord Developer Portal](https://discord.com/developers/applications), create an application and enable **Message Content Intent** under **Bot**.
 2. In **Group**, open **Bot Discord**, save its Application ID and token, then use **Invite bot**. The invitation requests zero guild-wide permissions.
@@ -76,6 +80,8 @@ The first page shows the cumulative totals and estimated Pirate Token chance for
 
 ## Automatic replay verification
 
+The **Replay** column shows whether verification is in progress, succeeded, or found no matching replay. Select an unverified match and click **Retry replay** to check the replay still on disk, even when automatic verification is off. A successful retry updates the same match and its shared result, if configured. Manual retries keep the replay file.
+
 Select a match in **Match history** and click **Compare replay…**. An automatically verified match opens its saved comparison immediately, including after replay cleanup. For an unverified match, choose the `data.json` report exported by LED-N.
 
 ### What the replay can verify
@@ -95,8 +101,24 @@ In the 2026-11-11 HDR test, the replay identified normal, rare, rare sprite and 
 
 **Verify saved matches using Fortnite replays** in Settings is on by default. Disable it to keep the live results and skip replay reading. With automatic match detection enabled, a local Fortnite desktop capture can be checked against its automatic replay after returning to the lobby. Enable replay recording in Fortnite. The reader runs outside capture and matches the local replay against its start time and the saved match end. The Group display name can differ from the Epic display name. The app keeps the live result if it cannot identify and read a single replay.
 
-The verified opened-chest total replaces the live estimate in match history. While that match remains visible in the lobby, its verified total also appears as confirmed in the Dashboard and personal overlay. The comparison keeps the original live total and chest types. Destroyed chests remain in the replay comparison. Group publishes a correction under the same contribution ID, so updated hosts and guests see one result per player and match. The live timestamp history is saved with the match without video diagnostics.
+The verified opened-chest total replaces the live estimate in match history. Open a match in Group or Stats for the live-to-replay difference and changed chest types. While that match remains visible in the lobby, its verified total also appears as confirmed in the Dashboard and personal overlay. The comparison keeps the original live total and chest types. Destroyed chests remain in the replay comparison. Group publishes a correction under the same contribution ID, so updated hosts and guests see one result per player and match. If delivery fails, the app retries from saved match history, including after restart, without reopening the replay. The live timestamp history is saved with the match without video diagnostics.
 
 Under **Settings**, **Delete local Fortnite replays after successful verification** is off by default. Both host and guest can enable it independently. It removes only the matched automatic replay on that PC after saving the verified result and queuing any Group correction. Named replays and the saved match statistics are kept.
 
 Automatic verification requires the [LED-N replay reader](https://github.com/LED-N/Fortnite-ChestCounter) and the .NET 10 and ASP.NET Core 10 x64 runtimes. See [Microsoft downloads](https://dotnet.microsoft.com/en-us/download/dotnet/10.0). A portable build can include it in `runtime/replay-reader` using the packaging script's `--replay-reader` argument. For development, set `FCC_REPLAY_READER` to the absolute path of `ChestCounter.dll` in its build directory.
+
+**Dashboard → Team sync → Team details** shows the local count while waiting for a teammate’s first report. Each received count stays visible with its last update or final-result status. Only players who have reported in the detected match appear.
+
+
+**Dashboard** shows the current match phase, replay verification and pending Discord delivery. Local verification uses the Fortnite match ID to distinguish nearby replays. If no unique replay can be matched, the direct result stays in history.
+
+
+The **Discord** column in Group → Match history shows whether Discord accepted that match’s contribution, the result is pending, or a send failed. Select a pending or failed row and click **Retry Discord** to retry that contribution alone. A replay revision stays pending until Discord accepts the verified contribution. Previously private matches remain local.
+
+
+If the app stops during an identified Fortnite match, reopen it and start counting to resume saved counts once the app confirms the same match is still active. An interrupted capture does not produce a finished result by itself.
+
+
+If Fortnite returned to the lobby while the counter was closed, use **Dashboard → Capture health → Recover interrupted match** before resetting or starting another capture. The app checks the saved match ID against a timestamped lobby return in the last 16 MiB of the current Fortnite log. Confirm to keep the partial result and start replay verification if enabled. A verified replay replaces the same history entry. Partial results stay local until a replay verifies them. Verified results follow the Group sharing settings recorded at recovery.
+
+Hover the replay status in Match history for the next step. Missing files, unavailable readers, unreadable replays and ambiguous matches have separate messages.

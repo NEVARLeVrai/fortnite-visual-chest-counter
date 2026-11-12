@@ -125,3 +125,18 @@ def test_wrong_profile_or_invalid_context_falls_back_to_legacy_obs_output(tmp_pa
     file.write_text("{broken", encoding="utf-8")
     assert counter.read_overlay_context(tmp_path, value["state"]) is None
     assert len(overlay_layout.render_sections(options, {})) == 3
+
+
+def test_team_status_and_member_age_are_rendered_and_discarded_on_new_match():
+    value = context()
+    value["team_status"] = "Discord sync paused. Retrying automatically."
+    value["team_member_status"] = {"alex": "Local", "sam": "Last update 45s ago"}
+    value["team"]["member_totals"] = [("Alex", 5), ("Sam", 4)]
+    team = overlay_layout.render_sections(display(), value)[1]
+    assert "Sam · 4 · Last update 45s ago" in team
+    assert team.endswith(value["team_status"])
+    value["team"] = None
+    assert overlay_layout.render_sections(display(), value)[1] == value["team_status"]
+    assert not overlay_layout.render_sections({**display(), "screen_team_enabled": False}, value)[1]
+    advanced = overlay_layout.reconcile_context(value, {"session_started_at": "new", "certain": 0, "approximate": 0})
+    assert not overlay_layout.render_sections(display(), advanced)[1]

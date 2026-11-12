@@ -375,6 +375,48 @@ def test_qt_saved_match_recovers_group_outbox_after_enqueue_failure(app, monkeyp
     assert len(sent) == 1 and sent[0][2:] == ("Rin", 9, 5, {"unclassified": 9})
 
 
+def test_qt_restart_publishes_verified_match_after_queue_failure(app, monkeypatch):
+    gui, win, _ = app
+    group = gui.discord_group
+    webhook = group.Webhook("123456789012345678", "fixture-webhook-token")
+    match = gui.match_history.Match("recovered", "2026-11-11 13:13", "p", "Default", "Duo",
+                                    20, 7, "0%", player="Rin", group_webhook_id=webhook.id)
+    gui.match_history.save_match(win.match_history_path(), match)
+    group.queue_match(webhook, match, match.player)
+    sent = []
+    monkeypatch.setattr(group, "_publish", lambda _, event, player, count, certain, types, **flags:
+                        sent.append((event, player, count, certain, types, flags)))
+    assert group.flush(webhook) == 1
+
+    def fail_queue(*_args):
+        raise OSError("Outbox temporarily unavailable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(group, "queue_verified", fail_queue)
+        timeline = [(index, "Chest", False) for index in range(31)]
+        win.apply_verified_replay((match, webhook, (None, None, 31, {}, 0, timeline, "Rin")))
+    assert len(sent) == 1
+    saved, = gui.match_history.read_history(win.match_history_path())
+    assert saved.total == saved.certain == 31
+    gui.match_history.edit_match(win.match_history_path(), match.snapshot, 29, 29, "0%")
+
+    restarted = gui.MainWindow()
+    restarted.timer.stop()
+    restarted.slow.stop()
+    monkeypatch.setattr(group, "load_webhook", lambda: webhook)
+    monkeypatch.setattr(restarted, "auto_check", lambda: None)
+    try:
+        restarted.after_start()
+        assert restarted.discord._outbox_active.acquire(timeout=3)
+        restarted.discord._outbox_active.release()
+        assert len(sent) == 2
+        assert sent[0][0] == sent[1][0]
+        assert sent[1][1:] == ("Rin", 31, 31, {"chest": 31}, {"verified": True})
+        assert group.flush(webhook) == 0
+    finally:
+        restarted.close()
+
+
 def test_qt_solo_match_stays_local_with_group_configured(app, monkeypatch):
     gui, win, _ = app
     gui.C.update_config_file(gui.config_file(), "app", {"group_player": "Rin", "auto_discord_summary": True})
@@ -510,6 +552,143 @@ def test_qt_republishes_a_team_update_when_ranking_is_unchanged(app, monkeypatch
     assert len(edits) == 2
     assert win.group.team.text() == team.text()
     assert win.group.ranks.topLevelItem(0).text(1) == "Sam"
+
+def test_qt_guest_fetches_shared_session_while_counting_on_stats_page(app, monkeypatch):
+    from PySide6.QtTest import QTest
+
+    gui, win, _ = app
+    group = gui.discord_group
+    webhook = group.Webhook("123456789012345678", "fixture-webhook-token")
+    session = group.TeamSession("a" * 64, (group.SessionPlayer("Sam", 2, 3, 1, updated_at=100),))
+    win.set_group_role("guest")
+    win.pages.setCurrentWidget(win.stats)
+    win.worker.alive = True
+    win.group._webhook = webhook
+    win.group._scoreboard_id = "234567890123456789"
+    win.group._next_scoreboard_refresh = 0
+    monkeypatch.setattr(gui.discord_scoreboard, "fetch", lambda *_, **__: ((), None, None, (session,)))
+
+    win.group.sync_scoreboard()
+    for _ in range(100):
+        if not win.group._scoreboard_pending:
+            break
+        QTest.qWait(10)
+    assert win.group._sessions == (session,)
+
+
+def test_qt_team_overlay_explains_wait_and_shows_remote_age(app, monkeypatch):
+    gui, win, _ = app
+    group = gui.discord_group
+    win.set_group_role("guest")
+    win.worker.alive = True
+    win.group._webhook = group.Webhook("123456789012345678", "fixture-webhook-token")
+    win.group._scoreboard_id = "234567890123456789"
+    gui.C.update_config_file(gui.config_file(), "app", {"group_player": "Alex", "group_share_matches": True})
+    cfg = gui.load_cfg()[0]
+    status, ages = win.dashboard.team_sync_details(cfg, "", None)
+    assert (status, ages) == ("Current match is not identified.", {"alex": "Live · local counter"})
+
+    win._match_fingerprint = "a" * 64
+    status, _ = win.dashboard.team_sync_details(cfg, "", None)
+    assert "teammate" in status
+    monkeypatch.setattr(gui.time, "time", lambda: 100)
+    session = group.TeamSession(win._match_fingerprint, (group.SessionPlayer("Sam", 2, 3, 1, updated_at=53),))
+    win.group._sessions = (session,)
+    team = gui.match_stats.team(session, "Alex", current=(1, 2, 1.0))
+    assert win.dashboard.team_sync_details(cfg, "", team) == (
+        "", {"alex": "Live · local counter", "sam": "Last update 45s ago"})
+    monkeypatch.setattr(group, "webhook_retry_after", lambda _: 10)
+    status, ages = win.dashboard.team_sync_details(cfg, "", team)
+    assert "paused" in status and "sam" in ages
+
+    win.worker.alive = False
+    win._match_active = True
+    _, ages = win.dashboard.team_sync_details(cfg, "", team)
+    assert ages["alex"] == "Capture paused"
+
+
+def test_dashboard_diagnostics_use_match_and_capture_status(app, monkeypatch):
+    gui, win, _ = app
+    win.set_group_role("guest")
+    win.worker.alive = True
+    win.group._webhook = gui.discord_group.Webhook("123456789012345678", "fixture-webhook-token")
+    win.group._scoreboard_id = "234567890123456789"
+    gui.C.update_config_file(gui.config_file(), "app", {"group_player": "Alex", "group_share_matches": True})
+    win._match_fingerprint = "a" * 64
+    monkeypatch.setattr(gui.time, "time", lambda: 100)
+    player = gui.discord_group.SessionPlayer("Sam", 2, 3, 1, updated_at=53)
+    win.group._sessions = (gui.discord_group.TeamSession(win._match_fingerprint, (player,)),)
+    shown = []
+    monkeypatch.setattr(gui, "show_notice_dialog", lambda _parent, _title, text: shown.append(text))
+    win.dashboard.show_team_sync()
+    assert "Match ID · aaaaaaaaaaaa" in shown[0]
+    assert "Sam · 3 chests · Last update 45s ago" in shown[0]
+
+    win.set_mode("counting")
+    win.connected = {"process_fps": 15, "input_fps": 30, "resolution": [1280, 720]}
+    win.last_status = {"fps": 13.7, "dropped": 0, "backlog_s": 1.2, "ms_per_frame": 65}
+    monkeypatch.setattr(win.group, "sync_scoreboard", lambda: None)
+    monkeypatch.setattr(win.discord, "retry_group_outbox", lambda: None)
+    win._tick_slow()
+    assert win.dashboard.capture_health.text() == (
+        "Target 15 fps · Measured 13.7 fps · 0 frames skipped · 65 ms per frame · Stream backlog 1.2 s"
+    )
+    win.set_mode("stopped")
+    assert win.dashboard.capture_health.text() == "No active capture."
+
+
+def test_qt_host_reads_local_session_during_webhook_cooldown(app, monkeypatch):
+    from types import SimpleNamespace
+    from PySide6.QtTest import QTest
+
+    gui, win, _ = app
+    group = gui.discord_group
+    webhook = group.Webhook("123456789012345678", "fixture-webhook-token")
+    session = group.TeamSession("a" * 64, (group.SessionPlayer("Sam", 2, 3, 1, updated_at=100),))
+    win.set_group_role("host")
+    win.discord.runner = SimpleNamespace(status=("online", ""), webhook=webhook, stop=lambda **_: None)
+    win.group._webhook = webhook
+    win.group._scoreboard_id = "234567890123456789"
+    win.group._next_scoreboard_refresh = 0
+    monkeypatch.setattr(group, "webhook_retry_after", lambda _: 17.25)
+    monkeypatch.setattr(group.GroupStore, "sessions", lambda _: (session,))
+    monkeypatch.setattr(gui.discord_scoreboard, "publish", lambda *_, **__: pytest.fail("HTTP during cooldown"))
+
+    win.group.sync_scoreboard()
+    for _ in range(100):
+        if not win.group._scoreboard_pending:
+            break
+        QTest.qWait(10)
+    assert win.group._sessions == (session,)
+
+
+def test_manual_mid_match_recovery_needs_recent_linked_warmup_and_no_lobby(tmp_path):
+    from datetime import datetime, timezone
+
+    path = tmp_path / "FortniteGame.log"
+    now = datetime(2026, 11, 10, 20, 4, 55, tzinfo=timezone.utc).timestamp()
+    path.write_bytes(session_line(SESSION_A) + START)
+    os.utime(path, (now, now))
+    tail = match_lifecycle.LogTail(path)
+    assert tail.active_match(now=now) == (sha256(SESSION_A).hexdigest(), None)
+    assert tail.active_match(now=now + 61) is None
+    append(path, FRONTEND)
+    os.utime(path, (now, now))
+    assert tail.active_match(now=now) is None
+
+
+@pytest.mark.parametrize(("total", "linked"), [(0, True), (7, False)])
+def test_qt_manual_capture_links_active_match_only_with_empty_counter(app, monkeypatch, total, linked):
+    gui, win, _ = app
+    win.set_match_automation(True)
+    fingerprint = sha256(SESSION_A).hexdigest()
+    monkeypatch.setattr(win._match_tail, "active_match", lambda: (fingerprint, "Squad"))
+    seed(gui, win, (total, total))
+    assert win.start_counting()
+    assert win._match_active is linked
+    assert win._match_fingerprint == (fingerprint if linked else "")
+    assert win.primary_counts == (total, total)
+
 
 def test_qt_select_all_and_delete_match_history(app):
     gui, win, _ = app
@@ -775,6 +954,75 @@ def test_disabling_replay_verification_keeps_the_live_result(app):
     win.apply_verified_replay((match, None, (None, None, 1, {}, 0, [(1, "Chest", False)], "Rin")))
     assert gui.match_history.read_history(win.match_history_path()) == [match]
 
+def test_manual_replay_retry_updates_same_history_row(app, monkeypatch, tmp_path):
+    from datetime import datetime
+
+    gui, win, _ = app
+    gui.C.update_config_file(gui.config_file(), "app", {"auto_verify_replay": False})
+    path = tmp_path / "reader.dll"
+    path.touch()
+    monkeypatch.setattr(gui.replay_comparison, "reader_path", lambda: path)
+    match = gui.match_history.Match("retry", "2026-11-11 13:13", "p", "Default", "Duo", 1, 3, "0%")
+    gui.match_history.save_match(win.match_history_path(), match)
+    win.go_to(win.pages.indexOf(win.group))
+    win.group.load()
+    jobs = []
+
+    class PendingThread:
+        def __init__(self, *, target, **kwargs):
+            self.target = target
+
+        def start(self):
+            jobs.append(self.target)
+
+    monkeypatch.setattr(gui.threading, "Thread", PendingThread)
+    monkeypatch.setattr(gui.replay_comparison, "verify_local_replay", lambda *_args, **_kwargs: None)
+    win.group.retry_replay.click()
+    assert win.group.history.topLevelItem(0).text(10) == "Checking replay..."
+    assert not win.group.retry_replay.isEnabled()
+    win.start_replay_verification(match, manual=True)
+    assert len(jobs) == 1
+    jobs.pop()()
+    assert win.group.history.topLevelItem(0).text(10) == "No matching replay found"
+    assert win.group.retry_replay.isEnabled()
+
+    def verify(selected, finished_at, *, wait_seconds):
+        assert selected == match
+        assert datetime.fromtimestamp(finished_at) == datetime(2026, 11, 11, 13, 13, 30)
+        return path, None, 2, {}, 0, [(1, "Chest", False), (2, "Rare chest", False)], "Rin"
+
+    monkeypatch.setattr(gui.replay_comparison, "verify_local_replay", verify)
+    win.group.retry_replay.click()
+    jobs.pop()()
+    saved, = gui.match_history.read_history(win.match_history_path())
+    assert saved.snapshot == match.snapshot and saved.total == saved.certain == 2
+    assert win.group.history.topLevelItem(0).text(10) == "Verified"
+    assert not win.group.retry_replay.isEnabled()
+    assert path.exists()
+
+
+def test_match_details_show_replay_delta_and_type_changes(app, monkeypatch):
+    gui, win, _ = app
+    match = gui.match_history.Match("recap", "2026-11-11 13:13", "p", "Default", "Duo",
+                                    1, 1, "0%", chest_types={"chest": 1, "unknown": 1})
+    path = win.match_history_path()
+    gui.match_history.save_match(path, match)
+    timeline = [[1, "Chest", False], [2, "Rare chest", False], [3, "Rare chest", False], [4, "Chest", True]]
+    verified = gui.match_history.verify_match(path, match.snapshot, 3, "0%", {"chest": 1, "rare": 2},
+                                              {"owner": "Rin", "timeline": timeline, "destroyed": 1})
+    shown = []
+    monkeypatch.setattr(gui, "show_notice_dialog", lambda _parent, _title, text: shown.append(text))
+    win.group.load_history()
+    win.group._open_match_details(win.group.history.topLevelItem(0), 2)
+    win.stats.open_match(verified)
+    for details in shown:
+        assert "Live 2 → Replay 3 chests (+1)" in details
+        assert "Rare chest: 0 → 2" in details
+        assert "Unknown type: 1 → 0" in details
+    assert len(shown) == 2
+    assert "Chest: 1 → 2" not in shown[0]
+
+
 def test_local_replay_uses_timestamps_instead_of_group_alias(tmp_path):
     from dataclasses import replace
     from datetime import datetime, timedelta
@@ -807,3 +1055,184 @@ def test_local_replay_uses_timestamps_instead_of_group_alias(tmp_path):
     assert replay_comparison.read_report(report, linked, local_start=start + timedelta(seconds=7))[4] == 1
     with pytest.raises(ValueError, match="Expected one replay"):
         replay_comparison.read_report(report, replace(linked, session_fingerprint="b" * 64), local_start=start)
+
+def test_replay_selects_unique_match_id_among_nearby_files(tmp_path, monkeypatch):
+    from datetime import datetime
+    from fortnite_chest_counter import match_history, replay_comparison as replay
+
+    reader = tmp_path / "reader.dll"
+    reader.touch()
+    demos = tmp_path / "Demos"
+    demos.mkdir()
+    paths = [demos / f"UnsavedReplay-2026.11.11-13.00.0{i}.replay" for i in range(2)]
+    for path in paths:
+        path.write_bytes(b"fixture")
+    monkeypatch.setattr(replay, "reader_path", lambda: reader)
+    monkeypatch.setattr(replay.shutil, "which", lambda _: "dotnet")
+    monkeypatch.setattr(replay, "demos_path", lambda: demos)
+    monkeypatch.setattr(replay.time, "sleep", lambda _delay: None)
+    match = match_history.Match("match", datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                "p", "Default", "Duo", 0, 1, "0%", session_fingerprint="a" * 64)
+    calls = []
+
+    def read(_reader, path, identity, _match, *, timeout):
+        calls.append(path)
+        if path == paths[0]:
+            raise replay.ReplayAssociationError("wrong session ID")
+        return path, identity, 1, {}, 0, [(1, "Chest", False)], "Rin"
+
+    monkeypatch.setattr(replay, "_read_local_candidate", read)
+    assert replay.verify_local_replay(match, paths[0].stat().st_mtime)[0] == paths[1]
+    assert calls == paths
+    from dataclasses import replace
+    with pytest.raises(replay.ReplayAssociationError, match="Match ID unavailable"):
+        replay.verify_local_replay(replace(match, session_fingerprint=""), paths[0].stat().st_mtime)
+
+
+def test_dashboard_phase_and_setup_check(app, monkeypatch, tmp_path):
+    gui, win, log = app
+    log.write_text("Fortnite started", encoding="utf8")
+    monkeypatch.setattr(gui.paths, "local_fortnite_hud_scale", lambda: 0.73)
+    monkeypatch.setattr(gui.replay_comparison, "reader_path", lambda: tmp_path / "missing.dll")
+    report = gui.SetupPage.check_setup(gui.load_cfg()[0], {"source": "desktop-hdr"}, None, "guest", "")
+    assert "HDR → SDR selected" in report
+    assert "73% read" in report and "Game log readable" in report
+    assert "Replay reader or .NET missing" in report
+    win._match_active = True
+    win.worker.alive = True
+    win.mode = "counting"
+    win.update_match_phase()
+    assert win.dashboard.match_phase.text() == "In match"
+    win.set_group_delivery_status("Discord correction pending")
+    assert "Discord correction pending" in win.dashboard.match_phase.text()
+    win.worker.alive = False
+    win._match_active = False
+    win.mode = "stopped"
+    seed(gui, win, (1, 2))
+    assert win.save_current_match()
+    saved, = gui.match_history.read_history(win.match_history_path())
+    win.set_replay_status(saved, "Checking replay...")
+    assert "Lobby · verifying replay" in win.dashboard.match_phase.text()
+
+@pytest.mark.parametrize("automatic_start", [True, False])
+def test_restart_can_reattach_nonzero_counts_to_same_active_match(app, monkeypatch, automatic_start):
+    gui, win, log = app
+    fingerprint = sha256(SESSION_A).hexdigest()
+    win.set_match_automation(True)
+    if automatic_start:
+        append(log, session_line(SESSION_A) + START)
+        win.poll_match_log()
+    else:
+        monkeypatch.setattr(win._match_tail, "active_match", lambda: (fingerprint, "Duo"))
+        assert win.start_counting()
+    assert win._match_fingerprint == fingerprint
+    seed(gui, win, (5, 9))
+
+    restarted = gui.MainWindow()
+    restarted.timer.stop()
+    restarted.slow.stop()
+    restarted.match_timer.stop()
+    restarted.worker = type(win.worker)()
+    restarted._fill_sources([], [(0, 0, 1280, 720)])
+    restarted.dashboard.source.setCurrentIndex(
+        restarted.dashboard.source.findData({"source": "desktop", "monitor": 1}))
+    restarted.set_match_automation(True)
+    monkeypatch.setattr(restarted._match_tail, "active_match", lambda: (fingerprint, "Duo"))
+    try:
+        assert restarted.counts == (5, 9)
+        assert restarted.start_counting()
+        assert restarted._match_active and restarted._match_fingerprint == fingerprint
+        assert restarted.counts == (5, 9)
+        append(log, FRONTEND)
+        restarted.poll_match_log()
+        exit_worker(restarted)
+        saved, = gui.match_history.read_history(restarted.match_history_path())
+        assert saved.total == 9 and saved.session_fingerprint == fingerprint
+    finally:
+        restarted.worker.alive = False
+        restarted._workers_pending.clear()
+        restarted.close()
+
+def test_match_history_discord_status_and_retry_selected_row(app, monkeypatch):
+    gui, win, _ = app
+    webhook = gui.discord_group.Webhook("123456789012345678", "fixture-webhook-token")
+    monkeypatch.setattr(gui.discord_group, "load_webhook", lambda: webhook)
+    match = gui.match_history.Match("selected", "2026-11-11 13:13", "p", "Default", "Duo",
+                                    4, 0, "0%", player="Rin", group_webhook_id=webhook.id)
+    gui.match_history.save_match(win.match_history_path(), match)
+    win.group.load_player_setup()
+    win.group.load_history()
+    row = win.group.history.currentItem()
+    assert row.text(11) == "Pending"
+    win.group.receive_delivery_states(webhook.id, {match.snapshot: ("Retry needed", False)})
+    assert row.text(11) == "Retry needed" and win.group.retry_discord.isEnabled()
+    called = []
+    monkeypatch.setattr(win.discord, "retry_group_outbox", lambda *, snapshot: called.append(snapshot) or True)
+    win.group.retry_discord.click()
+    assert called == [match.snapshot]
+    win.group.receive_delivery_states(webhook.id, {match.snapshot: ("Sent", False)})
+    assert row.text(11) == "Sent" and not win.group.retry_discord.isEnabled()
+
+def test_recover_interrupted_match_uses_lobby_timestamp_and_saves_once(app, monkeypatch):
+    from datetime import datetime, timezone
+
+    gui, win, log = app
+    fingerprint = sha256(SESSION_A).hexdigest()
+    gui.C.set_counts(win._cfg_for_actions(), 5, 9, match_fingerprint=fingerprint)
+    win.read_state(force=True)
+    win.set_detected_mode("Squad")
+    append(log, session_line(SESSION_A) + START + FRONTEND + session_line(SESSION_B) + START)
+    notices = []
+    monkeypatch.setattr(gui, "show_notice_dialog", lambda _, title, message: notices.append((title, message)))
+    checks = []
+    monkeypatch.setattr(win, "start_replay_verification", lambda match, **kwargs: checks.append((match, kwargs)))
+    win.recover_interrupted_match()
+    win.recover_interrupted_match()
+
+    saved, = gui.match_history.read_history(win.match_history_path())
+    ended = datetime(2026, 11, 10, 20, 5, 2, 589000, tzinfo=timezone.utc)
+    assert saved.session_fingerprint == fingerprint and saved.recovered_partial and saved.total == 9
+    assert saved.finished_at == ended.astimezone().strftime("%Y-%m-%d %H:%M")
+    assert saved.mode == "Unknown"
+    assert len(checks) == 1 and checks[0][1]["finished_at"] == ended.timestamp()
+    assert "already" in notices[-1][1]
+    win.group.load_history()
+    assert win.group.history.topLevelItem(0).text(10) == "Partial result"
+
+
+def test_finished_match_requires_lobby_between_two_warmups(tmp_path):
+    log = tmp_path / "FortniteGame.log"
+    log.write_bytes(session_line(SESSION_A) + START + session_line(SESSION_B) + START + FRONTEND)
+    tail = match_lifecycle.LogTail(log)
+    assert tail.finished_match(sha256(SESSION_A).hexdigest()) is None
+    assert tail.finished_match(sha256(SESSION_B).hexdigest()) is not None
+
+def test_stats_quality_filters_preserve_original_live_data_and_combine(app):
+    from datetime import datetime
+
+    gui, win, _ = app
+    date = datetime.now().strftime("%Y-%m-%d %H:%M")
+    history = win.match_history_path()
+    match_type = gui.match_history.Match
+    def save(snapshot, mode, count, unknown, stamp=date):
+        match = match_type(snapshot, stamp, "p", "Default", mode, 0, count, "0%",
+                           chest_types={"unknown": unknown})
+        gui.match_history.save_match(history, match)
+
+    save("verified", "Duo", 12, 3)
+    save("unverified", "Duo", 13, 3)
+    save("different-mode", "Solo", 7, 4)
+    save("older", "Duo", 7, 4, "2000-01-01 12:00")
+    timeline = [[i, "Chest", i >= 7] for i in range(9)]
+    gui.match_history.verify_match(history, "verified", 7, "0%", {"chest": 7}, {"timeline": timeline})
+    gui.match_history.edit_match(history, "verified", 11, 11, "0%")
+    page = win.stats
+    page.load()
+    page.period.setCurrentIndex(page.period.findData(7))
+    page.mode.setCurrentIndex(page.mode.findData("Duo"))
+
+    for quality, snapshot in (("unknown", "verified"), ("unverified", "unverified"), ("delta", "verified")):
+        page.quality.setCurrentIndex(page.quality.findData(quality))
+        assert page.trend_grouping.currentData() is True
+        assert [match.snapshot for match in page.trend.visible_matches] == [snapshot]
+        assert "1 matches" in page.summary.text()
