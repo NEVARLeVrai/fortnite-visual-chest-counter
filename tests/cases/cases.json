@@ -336,6 +336,111 @@
           "text": "+600 XP / CHEST (unchanged until it fades)"
         }
       ]
+    },
+    "thiefs_720p_stream_chests": {
+      "capture": "20261111_234601",
+      "clip": "video/clip_m9h.ffconcat",
+      "window": [
+        0.5,
+        19.5
+      ],
+      "source": "Livestream URL at 720p (YouTube), Thiefs' stream, lossless recording",
+      "hud": 0.8,
+      "live": "0 counted (v0.3.0-rc5): exact small-word match 0.68-0.73 under the 0.75 trigger, blurred 0.92-0.93 (M9H)",
+      "truth": [
+        {
+          "t": 1.5,
+          "what": "new_popup",
+          "type": "chest",
+          "text": "+600 XP / CHEST"
+        },
+        {
+          "t": 7.9,
+          "what": "new_popup",
+          "type": "chest",
+          "text": "+600 XP / CHEST"
+        },
+        {
+          "t": 14.6,
+          "what": "new_popup",
+          "type": "chest",
+          "text": "+600 XP / CHEST"
+        }
+      ]
+    },
+    "thiefs_720p_map_flash": {
+      "capture": "20261111_235339",
+      "clip": "video/session.ffconcat",
+      "window": [
+        359.5,
+        366.0
+      ],
+      "source": "Livestream URL at 720p (YouTube), Thiefs' stream, standard-quality recording",
+      "hud": 0.8,
+      "live": "0 counted (v0.3.0-rc5). With only the lower trigger it counted twice: a full-screen map hid the pop-up for 0.6 s at 362.4 s (M9H)",
+      "truth": [
+        {
+          "t": 361.5,
+          "what": "new_popup",
+          "type": "chest",
+          "text": "+600 XP / CHEST, hidden 362.4-363.1 s by the map, then the same pop-up again"
+        }
+      ]
+    },
+    "thiefs_1080p_small_hud": {
+      "capture": "20261111_231622",
+      "clip": "video/clip_001.ffconcat",
+      "window": [
+        35.0,
+        70.0
+      ],
+      "source": "Desktop capture of a 1080p browser playing Thiefs' stream (the maintainer's rc5 acceptance test)",
+      "hud": 0.8,
+      "live": "7 counted, all APPROX (v0.3.0-rc5)",
+      "truth": [
+        {
+          "t": 37.7,
+          "what": "new_popup",
+          "type": "chest",
+          "text": "+600 XP / CHEST"
+        },
+        {
+          "t": 45.95,
+          "what": "new_popup",
+          "type": "chest",
+          "text": "+600 XP / CHEST"
+        },
+        {
+          "t": 62.45,
+          "what": "new_popup",
+          "type": "rare",
+          "text": "+900 XP / RARE CHEST"
+        },
+        {
+          "t": 64.0,
+          "what": "multiplier",
+          "type": "rare",
+          "text": "+1,800 XP / RARE CHEST X2"
+        },
+        {
+          "t": 65.14,
+          "what": "multiplier",
+          "type": "rare",
+          "text": "+2,700 XP / RARE CHEST X3"
+        },
+        {
+          "t": 66.07,
+          "what": "new_line",
+          "type": "sprite",
+          "text": "+3,600 XP / RARE CHEST X3 / SPRITE CHEST"
+        },
+        {
+          "t": 67.34,
+          "what": "new_line",
+          "type": "rare",
+          "text": "+4,500 XP / ... / SPRITE CHEST / RARE CHEST"
+        }
+      ]
     }
   }
 }

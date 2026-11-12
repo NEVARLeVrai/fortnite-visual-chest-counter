@@ -9,7 +9,7 @@ Frame source  ->  ChestEstimator.process_frame(t, frame)  ->  finished events
 Clues used (all existing detectors, parameters untouched):
   popup        word CHEST / BAU in the XP popup           (visual_detector.py)
                + scale-aware channel: CHEST drawn larger (bigger HUD), blurred match at smaller scales - APPROX only
-               + small-HUD channel: CHEST drawn smaller, a native small template - APPROX only
+               + small-HUD channel: CHEST drawn smaller, a native small template - APPROX, or CERTAIN when both of its matches are strong
                + stacked pop-ups: chests ADDED to a pop-up on screen (new line, X2, X3) - popup_lines.py
   sprite       "+75 CONTAINER OPENED" tag                  (sprite_detector.py)
   ammo         ammo-counter jumps = the local player fires (evidence.py)
@@ -28,7 +28,8 @@ Counting rules (see the constants below; all explicit and configurable):
                        (config), plus
                      - MEDIUM popups backed by a prompt + chest-object, plus
                      - prompt + chest-object events whose popup never fired, plus
-                     - scale-aware / small-HUD pop-ups (exact match too low): MEDIUM, APPROX only, plus
+                     - scale-aware / small-HUD pop-ups (exact match too low): MEDIUM, APPROX only (a small-HUD pop-up whose
+                       small-word matches reach SMALL_HIGH_* is HIGH, so CERTAIN), plus
                      - stacked steps: a chest line added (normal tier rules) or a multiplier step (APPROX only).
   never counted      LOW (e.g. MEDIUM while the player is shooting), generic prompts
                      (pickups, ammo crates, cannons...), anything else. They are still logged.
@@ -119,14 +120,28 @@ SCALED_LOCK_MIN = 0.84
 #   - candidate: exact match >= SMALL_TRIGGER and the blurred match at that place >= SMALL_CONFIRM (real small-HUD
 #     chests: exact 0.82-1.00 / blurred 0.91-1.00; everything else on the reference footage: <= 0.62 / <= 0.87)
 #   - the scale-aware channel's rules: English word only, 60 px prefilter, the exact path owns any pop-up it fires on
-#     within SCALED_WAIT, counted APPROX ONLY (MEDIUM), never CERTAIN
+#     within SCALED_WAIT, counted APPROX (MEDIUM), or CERTAIN when both matches are as strong as below (SMALL_HIGH_*)
 #   - no longer searched once the session's HUD scale is known to be normal or larger (scale vote)
+# M9H (docs/M9_VALIDATION.md): on a 720p stream the 22 x 7 px word loses its exact shape (chroma at 640 x 360), so real chests scored
+# exact 0.59-0.78 and 26 of 34 verified chests were missed with a 0.75 trigger. The blurred match kept them at 0.86-0.94. The trigger is now
+# 0.60 and the blurred confirmation stays 0.90: nothing that was not a chest reached 0.90 blurred at its best exact place (normal-HUD
+# English and PS5 footage 0.865, Thiefs' non-chest frames 0.86).
 SMALL_HUD_POPUPS = True
 SMALL_TEMPLATE_FILE = "chest/en/chest_small.npy"
 SMALL_SCALE = 1.25                 # its picture-scale equivalent, for the session's HUD-scale vote
-SMALL_TRIGGER = 0.75
+SMALL_TRIGGER = 0.60
 SMALL_CONFIRM = 0.90
 SMALL_REARM = 0.50
+# A small-HUD pop-up as trustworthy as a normal one reaches HIGH (= CERTAIN by default), like the normal word at exact >= 0.85. Both matches
+# must pass. Non-chests never exceeded 0.62 exact or 0.865 blurred (normal word: 0.65 / 0.78 against 0.85 / 0.88). Real 1080p small-HUD
+# chests reached 0.85-0.92 / 0.95-0.98; 720p ones never do, so they stay APPROX.
+SMALL_HIGH_EXACT = 0.85
+SMALL_HIGH_BLUR = 0.95
+# A single pop-up shows for about 2 s, and a chest opened meanwhile is added to it rather than starting another, so separate pop-ups began
+# 2.33 s or more apart (M9H). The same word at the same place sooner than this after an onset is that pop-up back after a moment hidden
+# (a 0.6 s full-screen map at 362.4 s of the M9H 720p capture), not a new chest.
+SMALL_SAME_POPUP_SECONDS = 2.0
+SMALL_SAME_POPUP_PIXELS = 4
 # Where the small word is searched (normalized frame pixels): the pop-up keeps its place when the HUD is smaller (Thiefs'
 # word at x 889-910, y 228-234 against 885-911, 229-235), so a box around it is enough - a third of the pop-up box's work.
 SMALL_SEARCH_BOX = (800, 170, 1010, 300)
@@ -306,6 +321,7 @@ class ChestEstimator:
             tpl = np.load(paths.TEMPLATES_DIR / SMALL_TEMPLATE_FILE).astype(np.float32)
             self.small = {"array": tpl, "blur": V.blur_template(tpl, ROBUST_SIGMA)}
         self.small_onset = OnsetDetector(SMALL_TRIGGER, SMALL_REARM, False)
+        self.small_last_onset = None       # (t, y, x) of the last small-HUD pop-up taken as a new one
         self.stack_word = next((word for word in SCALED_POPUP_TEMPLATES if word in self.robust_templates), None)
         self.stacked = bool((STACKED_POPUPS if stacked is None else stacked) and self.stack_word)
         self.french_group = chest_types.FrenchQualifiedPopups() if self.stacked and self.stack_word == "fr:COFFRE" else None
@@ -956,7 +972,15 @@ class ChestEstimator:
             if p.get("small") and t <= p["onset"] + POPUP_FINISH_DELAY and blur > p["blur"] and exact >= SMALL_TRIGGER:
                 p.update(blur=blur, exact_small=exact, y=cy, x=cx)
         if self.small_onset.update(t, exact, cy, cx):
-            if not any(abs(o - t) <= SCALED_WAIT for o in self.exact_onsets) and \
+            last = self.small_last_onset
+            back = last is not None and t - last[0] < SMALL_SAME_POPUP_SECONDS and \
+                max(abs(cy - last[1]), abs(cx - last[2])) <= SMALL_SAME_POPUP_PIXELS
+            if back or (self.stacked and self.tracking == "small" and self.trackers["small"].active and (
+                    self._same_popup_counted() or any(p.get("small") and p.get("run") == self.tracked_run for p in self.pending_scaled))):
+                # the pop-up on screen, already counted, matched again (a dip and a return): not a new chest. A chest added to it is the
+                # pop-up tracker's to count.
+                self.scaled_stats["small_same_popup"] = self.scaled_stats.get("small_same_popup", 0) + 1
+            elif not any(abs(o - t) <= SCALED_WAIT for o in self.exact_onsets) and \
                     not any(abs(p["onset"] - t) <= POPUP_FINISH_DELAY for p in self.pending_popups):
                 self.pending_scaled.append({"onset": t, "blur": blur, "exact_small": exact, "scale": SMALL_SCALE,
                                             "y": cy, "x": cx, "template": "en:CHEST", "small": True})
@@ -964,6 +988,7 @@ class ChestEstimator:
                     self.pending_scaled[-1]["roi"] = roi.copy()
                 self.scaled_stats["small_onsets"] += 1
                 self.pending_scaled[-1]["run"] = self._track(t, "small", {"blur": blur, "scale": SMALL_SCALE}, (cy, cx))
+                self.small_last_onset = (t, cy, cx)
 
     def _scaled_scales(self):
         if self.scale_locked is None:
@@ -1199,11 +1224,16 @@ class ChestEstimator:
         scaled = p.get("scaled")
         inc = p.get("increment")
         if scaled is not None and scaled["scale"] > 1.0:
-            # HUD drawn smaller: a native small-word match; the normal word's exact score says nothing here. APPROX only.
-            adjusted, certain, approx = "MEDIUM", False, True
-            reason = (f"small-HUD pop-up: native small CHEST match {scaled.get('exact_small', 0.0):.2f} / blurred "
-                      f"{scaled['blur']:.2f} (HUD drawn ~0.8x; normal-word match {p['score']:.2f}) -> MEDIUM, counted "
-                      f"approx only (never CERTAIN)")
+            # HUD drawn smaller: a native small-word match; the normal word's exact score says nothing here. HIGH only when both small-word
+            # matches are as strong as SMALL_HIGH_*, otherwise MEDIUM and APPROX only.
+            exact_small = scaled.get("exact_small", 0.0)
+            strong = exact_small >= SMALL_HIGH_EXACT and scaled["blur"] >= SMALL_HIGH_BLUR
+            adjusted, approx = ("HIGH" if strong else "MEDIUM"), True
+            certain = adjusted in CERTAIN_TIERS
+            reason = (f"small-HUD pop-up: native small CHEST match {exact_small:.2f} / blurred {scaled['blur']:.2f} (HUD drawn ~0.8x; "
+                      f"normal-word match {p['score']:.2f}) -> " +
+                      (f"HIGH: both at least {SMALL_HIGH_EXACT:.2f} / {SMALL_HIGH_BLUR:.2f}" if strong else
+                       f"MEDIUM, counted approx only (CERTAIN needs {SMALL_HIGH_EXACT:.2f} / {SMALL_HIGH_BLUR:.2f})"))
         elif scaled is not None and p["template"] == PORTUGUESE_POPUP:
             adjusted, certain = "MEDIUM", False
             approx = APPROX_MEDIUM_WITH_OBJECT_SUPPORT and support is not None and not shooting

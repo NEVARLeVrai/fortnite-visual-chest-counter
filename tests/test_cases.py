@@ -84,12 +84,51 @@ def test_fixtures_and_truth_exist_for_every_case():
         assert case["truth"] and all(r["what"] in ("new_popup", "new_line", "multiplier", "not_chest") for r in case["truth"])
 
 
-def test_thiefs_small_hud_all_five_chests_approx_only():
+def test_thiefs_small_hud_all_five_chests_and_only_strong_new_pop_ups_certain():
     counted = check("thiefs_small_hud")
-    assert len(counted) == 5 and not any(e["certain_counted"] for e in counted)          # small HUD: APPROX only
+    assert len(counted) == 5
     assert [e.get("increment", {}).get("kind") for e in counted] == [None, None, "new_line", "multiplier", "multiplier"]
+    # M9H: a new small-HUD pop-up whose two small-word matches both reach SMALL_HIGH_* is CERTAIN (here 1.00 / 1.00, the pop-up the
+    # template was cut from, and 0.90 / 0.98); stacked steps stay APPROX only, as before
+    assert [e["certain_counted"] for e in counted] == [True, True, False, False, False]
+    assert all(e["approx_counted"] for e in counted)
     assert all(e["scaled_popup"]["scale"] == E.SMALL_SCALE for e in counted)
     assert not replay("thiefs_small_hud", small_hud=False, stacked=False)                # v0.2.1: nothing at all
+
+
+def _with(**constants):
+    """Run with some estimator constants changed, then put them back."""
+    class Patch:
+        def __enter__(self):
+            self.old = {k: getattr(E, k) for k in constants}
+            for k, v in constants.items():
+                setattr(E, k, v)
+
+        def __exit__(self, *exc):
+            for k, v in self.old.items():
+                setattr(E, k, v)
+    return Patch()
+
+
+def test_small_hud_chests_on_a_720p_stream_are_found():
+    """M9H: on a 720p stream the small word's exact match stayed at 0.68-0.73, under rc5's 0.75 trigger; the blurred match did not."""
+    counted = check("thiefs_720p_stream_chests")
+    assert not any(e["certain_counted"] for e in counted)                              # a 720p small word never reaches the CERTAIN bar
+    with _with(SMALL_TRIGGER=0.75):
+        assert not replay("thiefs_720p_stream_chests")                                 # rc5: all three missed
+
+
+def test_a_pop_up_hidden_for_a_moment_by_the_map_counts_once():
+    assert len(check("thiefs_720p_map_flash")) == 1
+    with _with(SMALL_SAME_POPUP_SECONDS=0):
+        assert len(replay("thiefs_720p_map_flash")) == 2                                # without the rule, the same pop-up twice
+
+
+def test_strong_1080p_small_hud_pop_ups_are_certain_and_steps_stay_approx():
+    counted = check("thiefs_1080p_small_hud")
+    assert [e["certain_counted"] for e in counted] == [True, True, False, False, False, False, False]
+    with _with(SMALL_HIGH_EXACT=2.0):
+        assert not any(e["certain_counted"] for e in replay("thiefs_1080p_small_hud"))  # rc5: all APPROX
 
 
 def test_small_hud_channel_alone_finds_the_two_new_pop_ups():
