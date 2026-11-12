@@ -8,3 +8,5 @@
 - Show the actual scale and confidence of each scaled detection in Activity.
 
 From v0.3.3, open **Settings → Check for updates**, then download and install the update. Your configuration, profiles and saved history are preserved.
+
+The first installation from this fork is manual. Extract the portable ZIP to establish trust in the fork's signing keys. The in-app updater remains experimental. If it cannot install an update, use the portable ZIP and copy your config.toml and state/ into the new folder.
