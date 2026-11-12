@@ -113,6 +113,48 @@ def register_commands(tree, guild, totals, ready, publish_board=None, board_sett
         return (f"**{total:,}** chests · {certain:,} confirmed · {total - certain:,} estimated\n"
                 f"Estimated Pirate Token chance · **{chance}**")
 
+    async def edit_reply(interaction, title, detail):
+        if interaction.app_permissions.embed_links:
+            await interaction.edit_original_response(
+                embed=discord.Embed(title=title, description=detail, color=0x5865F2),
+                allowed_mentions=discord.AllowedMentions.none())
+        else:
+            await interaction.edit_original_response(
+                content=f"**{title}**\n{detail}"[:2000], allowed_mentions=discord.AllowedMentions.none())
+
+    @tree.command(guild=guild, description="Show statistics for finished shared matches")
+    @app_commands.describe(player="Leave empty for the group, or choose a player")
+    @app_commands.autocomplete(player=autocomplete)
+    async def stats(interaction: discord.Interaction, player: str | None = None):
+        if not await check(interaction):
+            return
+        await interaction.response.defer(thinking=True)
+        try:
+            matches = await asyncio.wait_for(finished_matches(), timeout=8)
+        except (TimeoutError, OSError, sqlite3.Error, ValueError):
+            await interaction.edit_original_response(
+                content="Could not read shared match history. Try again in a moment.")
+            return
+        title = "Group stats"
+        if player is not None:
+            name = player.strip().casefold()
+            matches = [TeamSession(match.fingerprint, (member,)) for match in matches
+                       for member in match.players if member.name.casefold() == name]
+            if matches:
+                title = f"Stats · {matches[0].players[0].name}"
+        if not matches:
+            detail = "No finished shared matches for that player." if player is not None else "No finished shared matches yet."
+            await edit_reply(interaction, title, detail)
+            return
+
+        summary = synchronized_totals(matches)
+        best = max(matches, key=lambda match: (match.total, match_time(match)))
+        detail = (f"**{summary.matches:,}** synchronized matches\n"
+                  f"{match_totals(summary.certain, summary.total, summary.chance)}\n"
+                  f"Average per match · **{summary.total / summary.matches:,.1f}** chests\n"
+                  f"Best match · **{best.total:,}** chests · {match_stamp(best)}")
+        await edit_reply(interaction, title, detail)
+
     async def match_choices(interaction, current):
         if interaction.guild_id != guild.id or not ready():
             return []
@@ -173,11 +215,7 @@ def register_commands(tree, guild, totals, ready, publish_board=None, board_sett
         first = (page - 1) * page_size
         body = "\n".join(rows[first:first + page_size]) or "No matches shared yet."
         detail = f"{intro}\n\n{body}\n\nPage {page:,} / {pages:,}"
-        if interaction.app_permissions.embed_links:
-            await interaction.edit_original_response(
-                embed=discord.Embed(title=title, description=detail, color=0x5865F2))
-        else:
-            await interaction.edit_original_response(content=f"**{title}**\n{detail}"[:2000])
+        await edit_reply(interaction, title, detail)
 
     @tree.command(guild=guild, description="Show the full leaderboard or publish it in this channel")
     @app_commands.describe(publish="Publish the auto-updating board here (Manage Server required)")

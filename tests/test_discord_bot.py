@@ -133,7 +133,7 @@ def test_guild_registration_and_runtime_permission_check(tmp_path, monkeypatch):
         monkeypatch.setattr(bot.http, "upsert_guild_command", upsert)
         await bot.setup_hook()
         assert {(app, guild_id) for app, guild_id, _ in upserts} == {(456, 123)}
-        assert {payload["name"] for _, _, payload in upserts} == {"chests", "leaderboard", "match", "add", "reset"}
+        assert {payload["name"] for _, _, payload in upserts} == {"chests", "leaderboard", "match", "stats", "add", "reset"}
         assert not bot.tree.get_commands()
         assert bot.feed_channel is feed
         assert bot.intents.message_content and not bot.intents.members
@@ -454,6 +454,17 @@ def test_leaderboard_command_reuses_rich_embed_and_checks_publish_permission(tmp
         assert "**11** chests · 7 confirmed · 4 estimated" in history
         assert "0.010181%" in history
         assert fingerprint[:12] in history and "bbbb" not in history
+        stats = tree.get_command("stats", guild=guild)
+        await stats.callback(interaction)
+        group = calls[-1][1]["embed"]
+        assert group.title == "Group stats"
+        assert "**11** chests" in group.description and "**5.5**" in group.description
+        await stats.callback(interaction, player=" rIn ")
+        personal = calls[-1][1]["embed"]
+        assert personal.title == "Stats · Rin"
+        assert "**8** chests" in personal.description and "0.005818%" in personal.description
+        await stats.callback(interaction, player="Echo")
+        assert "No finished shared matches" in calls[-1][1]["embed"].description
         await match.callback(interaction, id=fingerprint[:12])
         summary = calls[-1][1]["embed"].description
         assert "**8** chests · 5 confirmed · 3 estimated" in summary

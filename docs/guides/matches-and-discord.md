@@ -56,6 +56,7 @@ Bot and webhook credentials are stored in Windows Credential Manager.
 |---|---|
 | `/chests` | Show shared totals, or a player's stats including chest types. |
 | `/match` | Browse completed shared matches by page. Choose an ID to see the chest counts, participating reports and estimated Pirate Token odds for one match. |
+| `/stats` | Show totals, average, best match and estimated Pirate Token odds for finished shared matches. Choose a player to filter. |
 | `/leaderboard` | Show the synchronized total and the same ranking as the published board. |
 | `/leaderboard publish:true` | Publish or move the tracked live board to this channel. Requires Manage Server. |
 | `/add` | Correct a player's total. Requires Manage Server. |

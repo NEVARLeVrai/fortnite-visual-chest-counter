@@ -22,14 +22,14 @@ import traceback
 import uuid
 from collections import Counter, deque
 from contextlib import ExitStack
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from html import escape
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QEasingCurve, QPoint, QRect, QRectF, QSize, Qt, Signal, QTimer, QUrl, QUrlQuery, QVariantAnimation
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontDatabase, QFontMetrics, QGuiApplication, QIcon, QImage, QPainter, QPainterPath, QPalette, QPixmap, QRegion
+from PySide6.QtCore import QByteArray, QEasingCurve, QPoint, QPointF, QRect, QRectF, QSize, Qt, QSignalBlocker, Signal, QTimer, QUrl, QUrlQuery, QVariantAnimation
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontDatabase, QFontMetrics, QGuiApplication, QIcon, QImage, QPainter, QPainterPath, QPalette, QPen, QPixmap, QRegion
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog,
-                               QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+                               QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QMainWindow, QMenu, QPlainTextEdit, QProgressBar, QPushButton, QRadioButton,
                                QScrollArea, QSizePolicy, QSlider, QSpinBox, QSplitter, QStackedWidget, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTreeWidget, QTreeWidgetItem, QSystemTrayIcon, QVBoxLayout, QWidget)
 
@@ -2309,6 +2309,173 @@ class SettingsPage(QWidget):
         open_path(path)
 
 
+class StatsTrend(QWidget):
+    """Chronological chest totals with bounded, consecutive time buckets."""
+
+    match_activated = Signal(object)
+
+    def __init__(self):
+        super().__init__()
+        self.buckets = []
+        self.by_match = False
+        self.visible_matches = []
+        self.averages = []
+        self.selected = 0
+        self.setMinimumHeight(168)
+        self.setMouseTracking(True)
+        self.setAccessibleName("Chests over time")
+
+    def set_matches(self, matches, days, today, *, by_match=False):
+        self.by_match = by_match
+        self.visible_matches = []
+        self.averages = []
+        self.selected = 0
+        totals = Counter()
+        dates = Counter()
+        for match in matches:
+            try:
+                day = date.fromisoformat(match.finished_at[:10])
+            except ValueError:
+                continue
+            totals[day] += match.total
+            dates[day] += 1
+        self.buckets = []
+        if by_match:
+            ordered = sorted(matches, key=lambda match: match.finished_at)
+            first = max(0, len(ordered) - 30)
+            self.visible_matches = ordered[first:]
+            self.buckets = [(match.finished_at, match.finished_at, match.total, 1) for match in self.visible_matches]
+            self.averages = [sum(match.total for match in ordered[i - 4:i + 1]) / 5 if i >= 4 else None
+                             for i in range(first, len(ordered))]
+        elif dates:
+            first = today - timedelta(days=days - 1) if days else min(dates)
+            last = today if days else max(dates)
+            span = (last - first).days + 1
+            step = max(1, math.ceil(span / 30))
+            self.buckets = [(first + timedelta(days=offset), first + timedelta(days=min(offset + step, span) - 1), 0, 0)
+                            for offset in range(0, span, step)]
+            for day, total in totals.items():
+                index = (day - first).days // step
+                if 0 <= index < len(self.buckets):
+                    a, b, count, games = self.buckets[index]
+                    self.buckets[index] = (a, b, count + total, games + dates[day])
+        self.setFocusPolicy(Qt.StrongFocus if self.visible_matches else Qt.NoFocus)
+        self.setAccessibleDescription(
+            ("Use arrow keys to select a match and Enter to open its details. " if self.visible_matches else "")
+            + " ".join(self.bucket_text(bucket) for bucket in self.buckets)
+        )
+        self.setToolTip("")
+        self.update()
+
+    @staticmethod
+    def bucket_text(bucket):
+        first, last, count, games = bucket
+        span = str(first) if first == last else f"{first} – {last}"
+        if not games:
+            return f"{span} · No saved matches"
+        return f"{span} · {count:,} chests · {games:,} matches"
+
+    def plot(self):
+        return QRectF(42, 12, max(1, self.width() - 52), self.height() - 58)
+
+    def bucket_at(self, position):
+        plot = self.plot()
+        if self.buckets and plot.contains(position):
+            return min(len(self.buckets) - 1, int((position.x() - plot.left()) * len(self.buckets) / plot.width()))
+        return None
+
+    def mouseMoveEvent(self, event):
+        index = self.bucket_at(event.position())
+        detail = self.bucket_text(self.buckets[index]) if index is not None else ""
+        if index is not None and self.visible_matches:
+            average = self.averages[index]
+            if average is not None:
+                detail += f" · 5-match average {average:,.1f}"
+            self.setCursor(Qt.PointingHandCursor)
+        else:
+            self.unsetCursor()
+        self.setToolTip(detail)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        index = self.bucket_at(event.position())
+        if event.button() == Qt.LeftButton and index is not None and self.visible_matches:
+            self.selected = index
+            self.match_activated.emit(self.visible_matches[index])
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        if self.visible_matches and key in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+            if key in (Qt.Key_Left, Qt.Key_Right):
+                self.selected = min(len(self.visible_matches) - 1, max(0, self.selected + (1 if key == Qt.Key_Right else -1)))
+                self.update()
+            else:
+                self.match_activated.emit(self.visible_matches[self.selected])
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def paintEvent(self, event):
+        with QPainter(self) as painter:
+            painter.setFont(self.font())
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setPen(QColor(theme.MUTED))
+            if not self.buckets:
+                painter.drawText(self.rect(), Qt.AlignCenter, "No dated matches in this period.")
+                return
+            plot = self.plot()
+            peak = max(1, *(bucket[2] for bucket in self.buckets),
+                       *(value for value in self.averages if value is not None))
+            for value, y in ((peak, plot.top()), (0, plot.bottom())):
+                painter.setPen(QColor(theme.BORDER))
+                painter.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
+                painter.setPen(QColor(theme.MUTED))
+                painter.drawText(QRectF(0, y - 9, 37, 18), Qt.AlignRight | Qt.AlignVCenter, f"{value:,}")
+            slot = plot.width() / len(self.buckets)
+            bar = min(36, slot * 0.68)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(theme.ACCENT))
+            for i, (_, _, count, _) in enumerate(self.buckets):
+                if count:
+                    height = max(1, plot.height() * count / peak)
+                    painter.drawRoundedRect(QRectF(plot.left() + i * slot + (slot - bar) / 2,
+                                                   plot.bottom() - height, bar, height), 3, 3)
+            if self.visible_matches and self.hasFocus():
+                painter.setPen(QColor(theme.TEXT))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRect(QRectF(plot.left() + self.selected * slot, plot.top(), slot, plot.height()))
+            if self.averages:
+                line = QPainterPath()
+                started = False
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QColor(theme.CERTAIN))
+                for i, average in enumerate(self.averages):
+                    if average is None:
+                        continue
+                    point = QPointF(plot.left() + (i + 0.5) * slot, plot.bottom() - plot.height() * average / peak)
+                    if started:
+                        line.lineTo(point)
+                    else:
+                        line.moveTo(point)
+                        started = True
+                    painter.drawEllipse(point, 3, 3)
+                pen = QPen(QColor(theme.CERTAIN), 2)
+                painter.strokePath(line, pen)
+            painter.setPen(QColor(theme.MUTED))
+            dates = QRectF(plot.left(), plot.bottom() + 8, plot.width(), 19)
+            if self.by_match:
+                painter.drawText(dates, Qt.AlignLeft, "Oldest shown")
+                if len(self.buckets) > 1:
+                    painter.drawText(dates, Qt.AlignRight, "Latest")
+            else:
+                painter.drawText(dates, Qt.AlignLeft, self.buckets[0][0].strftime("%d %b"))
+                if self.buckets[0][0] != self.buckets[-1][1]:
+                    painter.drawText(dates, Qt.AlignRight, self.buckets[-1][1].strftime("%d %b"))
+
+
 class StatsPage(QWidget):
     def __init__(self, win):
         super().__init__()
@@ -2319,39 +2486,84 @@ class StatsPage(QWidget):
         for caption, days in (("All time", 0), ("Last 7 days", 7), ("Last 30 days", 30)):
             self.period.addItem(caption, days)
         self.period.setAccessibleName("Stats period")
-        body.addWidget(self.period, 0, Qt.AlignLeft)
+        self.mode = MaterialComboBox()
+        self.mode.addItem("All modes", None)
+        self.mode.setAccessibleName("Game mode filter")
+        filters = QHBoxLayout()
+        filters.addWidget(self.period)
+        filters.addWidget(self.mode)
+        filters.addStretch()
+        body.addLayout(filters)
         self.summary = label("", wrap=True)
         self.record = label("", "hint", wrap=True)
-        body.addWidget(self.summary)
-        body.addWidget(self.record)
+        for value in (self.summary, self.record):
+            value.setTextFormat(Qt.PlainText)
+            body.addWidget(value)
         layout.addWidget(overview)
 
-        breakdown, body = card("Chest types")
-        self.types = label("", wrap=True)
-        for value in (self.summary, self.record, self.types):
-            value.setTextFormat(Qt.PlainText)
-        body.addWidget(self.types)
+        trend, body = card("Chests over time")
+        self.trend_grouping = MaterialComboBox()
+        self.trend_grouping.addItem("By date", False)
+        self.trend_grouping.addItem("By match · latest 30", True)
+        self.trend_grouping.setAccessibleName("Chart grouping")
+        body.addWidget(self.trend_grouping, 0, Qt.AlignLeft)
+        self.trend = StatsTrend()
+        self.trend.match_activated.connect(self.open_match)
+        body.addWidget(self.trend)
+        self.trend_hint = label("Green line · 5-match average. Select a bar to open the match.", "hint", wrap=True)
+        body.addWidget(self.trend_hint)
+        layout.addWidget(trend)
+
+        breakdown, self.type_rows = card("Chest types")
         layout.addWidget(breakdown)
+        modes, body = card("By game mode")
+        self.modes = GroupPage._table(("Mode", "Matches", "Chests", "Average", "Best"))
+        self.modes.setSelectionMode(QTreeWidget.NoSelection)
+        self.modes.header().setSectionResizeMode(QHeaderView.Stretch)
+        body.addWidget(self.modes)
+        layout.addWidget(modes)
         layout.addStretch(1)
         self.period.currentIndexChanged.connect(self.load)
+        self.mode.currentIndexChanged.connect(self.load)
+        self.trend_grouping.currentIndexChanged.connect(self.load)
 
     def load(self):
+        error = ""
         try:
             matches = match_history.read_history(self.win.match_history_path())
-        except (OSError, ValueError) as error:
-            self.summary.setText(str(error))
-            self.record.clear()
-            self.types.clear()
-            return
-        days = self.period.currentData()
+        except (OSError, ValueError) as exc:
+            matches, error = [], str(exc)
+        modes = sorted({match.mode for match in matches if match.mode})
+        if modes != [self.mode.itemData(index) for index in range(1, self.mode.count())]:
+            selected_mode = self.mode.currentData()
+            with QSignalBlocker(self.mode):
+                self.mode.clear()
+                self.mode.addItem("All modes", None)
+                for mode in modes:
+                    self.mode.addItem(mode, mode)
+                self.mode.setCurrentIndex(max(0, self.mode.findData(selected_mode)))
+        mode = self.mode.currentData()
+        if mode is not None:
+            matches = [match for match in matches if match.mode == mode]
+        days, today = self.period.currentData(), datetime.now().date()
         if days:
-            first_day = (datetime.now().date() - timedelta(days=days - 1)).isoformat()
-            matches = [match for match in matches if match.finished_at[:10] >= first_day]
+            first_day = (today - timedelta(days=days - 1)).isoformat()
+            matches = [match for match in matches if first_day <= match.finished_at[:10] <= today.isoformat()]
+
+        by_match = self.trend_grouping.currentData()
+        self.trend.set_matches(matches, days, today, by_match=by_match)
+        self.trend_hint.setVisible(bool(by_match and matches))
+        self.modes.clear()
+        for index in range(self.type_rows.count() - 1, 0, -1):
+            row = self.type_rows.takeAt(index).widget()
+            row.hide()
+            row.deleteLater()
         if not matches:
-            self.summary.setText("No saved matches for this period.")
+            self.summary.setText(error or "No saved matches for this period.")
             self.record.clear()
-            self.types.clear()
+            self.type_rows.addWidget(label("No chests recorded.", "hint"))
             return
+
         summary = match_stats.cumulative(matches, {}, "")
         best = max(matches, key=lambda match: (match.total, match.finished_at))
         verified = sum(bool(match.replay) for match in matches)
@@ -2361,16 +2573,59 @@ class StatsPage(QWidget):
             f"Estimated Pirate Token chance · {summary.chance}"
         )
         self.record.setText(f"Best match · {best.total:,} chests · {best.finished_at} · {best.mode}")
+
         types = Counter()
+        by_mode = {}
         for match in matches:
             types.update(match.chest_types)
+            by_mode.setdefault(match.mode, []).append(match.total)
         missing = summary.total - sum(types.values())
         if missing > 0:
             types["unclassified"] += missing
-        self.types.setText("  ·  ".join(
-            f"{discord_group.GROUP_TYPE_LABELS.get(kind, kind)} {count:,}"
-            for kind, count in types.most_common() if count
-        ) or "No chests recorded.")
+        type_total = sum(types.values())
+        if not type_total:
+            self.type_rows.addWidget(label("No chests recorded.", "hint"))
+        for kind, count in types.most_common():
+            if not count:
+                continue
+            name = discord_group.GROUP_TYPE_LABELS.get(kind, kind)
+            title = label(f"{name} · {count:,} · {count / type_total:.1%}")
+            title.setTextFormat(Qt.PlainText)
+            row = QWidget()
+            columns = QHBoxLayout(row)
+            columns.setContentsMargins(0, 0, 0, 0)
+            columns.addWidget(title, 2)
+            bar = QProgressBar()
+            bar.setRange(0, 1000)
+            bar.setValue(round(1000 * count / type_total))
+            bar.setTextVisible(False)
+            bar.setFixedHeight(10)
+            bar.setAccessibleName(title.text())
+            columns.addWidget(bar, 3)
+            self.type_rows.addWidget(row)
+        for mode, totals in sorted(by_mode.items()):
+            total = sum(totals)
+            self.modes.addTopLevelItem(QTreeWidgetItem(
+                (mode, f"{len(totals):,}", f"{total:,}", f"{total / len(totals):,.1f}", f"{max(totals):,}")
+            ))
+
+
+    def open_match(self, match):
+        lines = [
+            f"{match.finished_at} · {match.mode}",
+            f"{match.total:,} chests · {match.certain:,} confirmed · {match.estimated:,} estimated",
+            f"Estimated Pirate Token chance · {match_stats.personal(match.certain, match.total, match.boost).chance}",
+        ]
+        for kind, count in sorted(match.chest_types.items()):
+            if count:
+                lines.append(f"{discord_group.GROUP_TYPE_LABELS.get(kind, kind)} · {count:,}")
+        direct = match.replay.get("direct")
+        if isinstance(direct, dict) and all(type(direct.get(key)) is int for key in ("certain", "estimated")):
+            live_total = direct["certain"] + direct["estimated"]
+            lines.append(f"Live · {live_total:,} chests  /  Replay · {match.total:,} chests ({match.total - live_total:+,})")
+        elif match.replay:
+            lines.append("Replay verified")
+        show_notice_dialog(self, "Match details", "\n".join(lines))
 
 
 class GroupPage(QWidget):
