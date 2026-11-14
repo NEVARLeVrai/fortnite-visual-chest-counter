@@ -184,13 +184,13 @@ def test_a_rejected_release_is_never_offered():
     m = manager(REJECTED)
     m.check(manual=False)
     m.poll()
-    assert m.state == UM.IDLE and m.check_message == ""
+    assert m.state == UM.IDLE and m.check_message == REJECTED.message
 
 
-def test_automatic_network_failures_are_silent():
+def test_automatic_network_failures_only_show_feedback_in_settings():
     m = manager(NO_NETWORK)
     m.check(manual=False)
-    assert m.poll() is True and m.state == UM.IDLE and m.check_message == "" and m.indicator_text() == ""
+    assert m.poll() is True and m.state == UM.IDLE and m.check_message == NO_NETWORK.message and m.indicator_text() == ""
 
 
 def test_manual_network_failures_are_explained():
@@ -556,13 +556,13 @@ def test_gui_automatic_check_does_not_open_anything():
             assert w.win.update_dialog is None or not w.win.update_dialog.isVisible()
 
 
-def test_gui_automatic_failures_show_nothing():
+def test_gui_automatic_failures_show_feedback_in_settings():
     for result in (NO_NETWORK, REJECTED):
         with window(result) as w:
             if w:
                 w.win.auto_check()
                 poll(w)
-                assert w.win.update_link.isHidden() and w.win.settings_page.update_status.text() == "" and w.win.dashboard.notice.isHidden()
+                assert w.win.update_link.isHidden() and w.win.settings_page.update_status.text() == result.message and w.win.dashboard.notice.isHidden()
 
 
 def test_gui_manual_check_gives_feedback():
@@ -1049,3 +1049,17 @@ if __name__ == "__main__":
             traceback.print_exc()
     print(f"{len(tests) - failed}/{len(tests)} update window checks passed")
     sys.exit(1 if failed else 0)
+
+def test_gui_check_runs_after_successful_updater_restart():
+    with window(UP_TO_DATE) as w:
+        if w:
+            with patched(w.A, AUTO_CHECK_DELAY_MS=0):
+                w.win.after_start(installing=True)
+                settle(w)
+                assert w.checks == []
+                with patched(w.A.update_install, last_result=lambda: {"outcome": "committed", "to": w.A.__version__}):
+                    assert w.win.show_update_result()
+                settle(w)
+                poll(w)
+            assert len(w.checks) == 1
+            assert w.win.settings_page.update_status.text() == UP_TO_DATE.message

@@ -115,13 +115,17 @@ def compare_report(path, match):
     return _format_timelines(lines, match.live_events, timeline)
 
 
-def verified_chest_types(timeline):
+def verified_chest_types(timeline, *, include_destroyed=True):
     if not isinstance(timeline, (list, tuple)) or any(
         not isinstance(event, (list, tuple)) or len(event) != 3
         or not isinstance(event[1], str) or type(event[2]) is not bool for event in timeline
     ):
         return None
-    return Counter(chest_type(kind) for _, kind, destroyed in timeline if not destroyed)
+    return Counter(chest_type(kind) for _, kind, destroyed in timeline if include_destroyed or not destroyed)
+
+
+def saved_verified_chest_types(replay):
+    return verified_chest_types(replay.get("timeline"), include_destroyed=replay.get("includes_destroyed") is True)
 
 
 UNKNOWN_MINIMUM = 3
@@ -147,7 +151,7 @@ def matches_quality(match, quality):
         return (type(unknown) is int and UNKNOWN_MINIMUM <= unknown <= live_total
                 and unknown * 100 >= live_total * UNKNOWN_PERCENT)
     if quality == "delta" and match.replay:
-        types = verified_chest_types(match.replay.get("timeline"))
+        types = saved_verified_chest_types(match.replay)
         return types is not None and abs(sum(types.values()) - live_total) >= REPLAY_DELTA_MINIMUM
     return False
 
@@ -156,12 +160,11 @@ def saved_recap(match, type_labels):
     if not match.replay:
         return []
     direct = match.replay.get("direct")
-    timeline = match.replay.get("timeline")
     if (not isinstance(direct, dict)
             or any(type(direct.get(key)) is not int or direct[key] < 0 for key in ("certain", "estimated"))):
         return ["Replay verified"]
     live_total = direct["certain"] + direct["estimated"]
-    replay_types = verified_chest_types(timeline)
+    replay_types = saved_verified_chest_types(match.replay)
     if replay_types is None:
         return ["Replay verified", f"Live {live_total:,} → Saved {match.total:,} chests ({match.total - live_total:+,})"]
 
@@ -189,7 +192,7 @@ def saved_comparison(match):
         match.replay["owner"],
         f"Live: {live_total} chests ({direct['certain']} confirmed, {direct['estimated']} estimated)",
         f"Replay: {len(timeline)} chest events ({match.replay['destroyed']} destroyed)",
-        f"Verified openings: {match.total} ({match.total - live_total:+d} vs live)",
+        f"Verified chests: {match.total} ({match.total - live_total:+d} vs live)",
     ]
     return _format_timelines(lines, match.live_events, timeline)
 

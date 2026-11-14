@@ -74,7 +74,7 @@ class UpdateManager:
         self.state = IDLE
         self.update = None
         self.status = prepare.PreparationStatus()
-        self.check_message = ""                # feedback for a manual check; automatic checks never set it
+        self.check_message = ""                # feedback in Settings
         self.last_problem_kind = None
         self.error = ""
         self.error_detail = ""
@@ -133,8 +133,7 @@ class UpdateManager:
                 self._open_requested = True
             return False
         self._manual, self._before_check = manual, self.state
-        if manual:
-            self.check_message = "Checking for updates..."
+        self.check_message = "Checking for updates..."
         self._job = self._check_factory().start()
         self.state = CHECKING
         return True
@@ -149,8 +148,7 @@ class UpdateManager:
             self.update, self.state = None, IDLE
         else:
             self.state = self._before_check                            # no answer says nothing about what was known before
-        if self._manual:
-            self.check_message = result.message
+        self.check_message = result.message
 
     # ---- preparing
     def start_preparing(self, policy):

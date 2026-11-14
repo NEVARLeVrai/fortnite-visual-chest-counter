@@ -709,7 +709,7 @@ class GroupStore:
 
     def queue_verified(self, match, player):
         player = validate_player(player)
-        verified_types = replay_comparison.verified_chest_types(match.replay.get("timeline"))
+        verified_types = replay_comparison.saved_verified_chest_types(match.replay)
         if verified_types is not None:
             match = replace(match, certain=sum(verified_types.values()), estimated=0,
                             chest_types=dict(verified_types))

@@ -2,7 +2,7 @@
 
 Open **Stats** in the navigation rail. Choose a period, a game mode and a match quality filter to filter the totals, record, graphs and mode table. The 7-day and 30-day filters include today.
 
-The quality filter offers **Many unknown chests** (at least 3 unknown chests and 25% of the original live total), **No verified replay**, and **Large replay difference** (at least 5 more or fewer openings than the original live count). Verified matches use the stored live breakdown for the unknown filter. The replay difference counts openings and excludes destroyed chests. Choosing a quality filter opens the per-match chart so you can select a result directly.
+The quality filter offers **Many unknown chests** (at least 3 unknown chests and 25% of the original live total), **No verified replay**, and **Large replay difference** (at least 5 more or fewer openings than the original live count). Verified matches use the stored live breakdown for the unknown filter. For newly verified results, the replay difference includes destroyed chests. Choosing a quality filter opens the per-match chart so you can select a result directly.
 
 - **Overview** shows saved matches, chests, confirmed and estimated counts, average, record and how many matches were replay verified.
 - **Chests over time** groups by date or displays the last 30 matches within the current filters. In the per-match view, the green line starts after five matches and averages the current match and the four previous matches in the filtered history. Hover to read a bar. Click a match bar or use the arrow keys and Enter to open its result and the live-to-replay difference and chest-type changes when available.

@@ -5242,21 +5242,24 @@ class MainWindow(QMainWindow):
 
     # ---- updates (update_manager.py holds the state; checking and preparing run on their own threads)
     def after_start(self, installing=False):
-        """Called once the window is up. Not from the constructor, so the self-test can never touch the network."""
+        """Start normal background work once the window is up."""
         try:
             update_install.clear_orphaned_journal()
-            if installing:                             # the updater started this copy to prove itself: its verdict comes later
-                self._result_watch_until = time.monotonic() + RESULT_WATCH_SECONDS
-                return
-            self.show_update_result()
-            if load_cfg()[0]["update"]["check_automatically"]:
-                QTimer.singleShot(AUTO_CHECK_DELAY_MS, self.auto_check)
-        except Exception as error:                     # updates must never stop the app from opening
+            if not installing:
+                self.show_update_result()
+        except Exception as error:
             self.add_log({"type": "warn", "text": f"Could not check the last update ({type(error).__name__}: {error})."})
-        if not installing and self.group_role == "host" and self.discord.auto_start.isChecked():
+        if installing:
+            self._result_watch_until = time.monotonic() + RESULT_WATCH_SECONDS
+            return
+        self.schedule_auto_check()
+        if self.group_role == "host" and self.discord.auto_start.isChecked():
             self.discord.start_bot()
-        if not installing:
-            self.discord.retry_group_outbox()
+        self.discord.retry_group_outbox()
+
+    def schedule_auto_check(self):
+        if load_cfg()[0]["update"]["check_automatically"]:
+            QTimer.singleShot(AUTO_CHECK_DELAY_MS, self.auto_check)
 
     def auto_check(self):
         if self.updates.check(manual=False):
@@ -5274,6 +5277,7 @@ class MainWindow(QMainWindow):
                 self.dashboard.show_notice("An update did not finish. Close the app and open it again from its .exe. If this message comes back, "
                                            "extract the latest zip over the program folder. Your counts are safe.", theme.REJECT)
             return False
+        waiting_for_update_result = self._result_watch_until is not None
         self._result_watch_until = None
         notice = UM.describe_result(result, __version__)
         update_install.acknowledge_result()
@@ -5281,6 +5285,8 @@ class MainWindow(QMainWindow):
             level, text = notice
             self.dashboard.show_notice(text, {"success": theme.CERTAIN, "rolled_back": theme.APPROX}.get(level, theme.REJECT))
             self.add_log({"type": "info" if level == "success" else "warn", "text": text})
+        if result.get("outcome") == "committed" and waiting_for_update_result:
+            self.schedule_auto_check()
         QTimer.singleShot(8000, update_install.cleanup_finished)
         return True
 
@@ -5959,16 +5965,15 @@ class MainWindow(QMainWindow):
             self.add_log({"type": "info", "text": f"{failure}. Live counts were kept."})
             return
         path, identity, _, _, destroyed, timeline, owner = result
-        types = {}
-        for _, kind, broken in timeline:
-            if not broken:
-                label = replay_comparison.chest_type(kind)
-                types[label] = types.get(label, 0) + 1
+        types = replay_comparison.verified_chest_types(timeline)
+        if types is None:
+            self.set_replay_status(match, "Replay unreadable")
+            return
         total = sum(types.values())
         try:
             verified = match_history.verify_match(self.match_history_path(), match.snapshot, total,
-                                                  token_odds_text(total, match.boost), types,
-                                                  {"owner": owner, "destroyed": destroyed,
+                                                  token_odds_text(total, match.boost), dict(types),
+                                                  {"owner": owner, "destroyed": destroyed, "includes_destroyed": True,
                                                    "timeline": [list(event) for event in timeline]})
         except (OSError, ValueError) as error:
             self.set_replay_status(match, "Could not save replay result")

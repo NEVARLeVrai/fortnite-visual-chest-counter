@@ -899,7 +899,7 @@ def test_verified_replay_cleanup_waits_for_durable_result(app, monkeypatch, tmp_
     timeline = [(1, "Chest", False), (2, "Chest", True), (3, "Buried chest", False)]
     win.apply_verified_replay((match, webhook, (path, replay.replay_identity(path), 3, {}, 1, timeline, "Rin")))
     saved, = gui.match_history.read_history(win.match_history_path())
-    assert (saved.total, saved.replay["destroyed"], saved.replay["direct"]["estimated"]) == (2, 1, 3)
+    assert (saved.total, saved.replay["destroyed"], saved.replay["direct"]["estimated"]) == (3, 1, 3)
     assert path.exists() == (not enabled or queue_fails)
 
 @pytest.mark.parametrize("next_match_started", [False, True])
@@ -914,27 +914,28 @@ def test_replay_updates_lobby_display_without_replacing_live_state(app, next_mat
         win._match_active = True
     timeline = [(1, "Chest", False), (2, "Rare chest", False), (3, "Buried chest", False),
                 (4, "Sprite poster chest", False), (5, "Other chest", False), (6, "Chest", True)]
-    win.apply_verified_replay((match, None, (None, None, 5, {}, 1, timeline, "Rin")))
+    win.apply_verified_replay((match, None, (None, None, 6, {}, 1, timeline, "Rin")))
     context = win.dashboard.overlay_context()
     assert (context["personal"]["certain"], context["personal"]["total"]) == (
-        (1, 1) if next_match_started else (5, 5))
+        (1, 1) if next_match_started else (6, 6))
     assert context["replay_verified"] is not next_match_started
     assert win.counts == ((1, 1) if next_match_started else (1, 2))
-    assert win.dashboard.total.text() == ("1" if next_match_started else "5")
+    assert win.dashboard.total.text() == ("1" if next_match_started else "6")
     saved, = gui.match_history.read_history(win.match_history_path())
-    assert (saved.total, saved.replay["direct"]["certain"], saved.replay["direct"]["estimated"]) == (5, 1, 1)
+    assert (saved.total, saved.replay["direct"]["certain"], saved.replay["direct"]["estimated"]) == (6, 1, 1)
     if not next_match_started:
         cfg = gui.load_cfg()[0]
         display = {**cfg["display"], "use_custom_sections": True}
         text = win.dashboard.screen_overlay_text(display)
-        assert "Chests · 5" in text and "Confirmed · 5" in text and "Estimated · 0" in text
+        assert "Chests · 6" in text and "Confirmed · 6" in text and "Estimated · 0" in text
         assert "Replay verified" not in text
         win.dashboard.write_overlay_context(display, context)
         obs = (gui.paths.APP_DIR / cfg["state"]["obs_dir"] / "chest_counter.txt").read_text(encoding="utf-8")
         assert obs.strip() == text
-        assert context["cumulative"]["total"] == 5
-        for chest in ("Chest", "Rare chest", "Buried chest", "Spirit poster chest", "Unknown type"):
+        assert context["cumulative"]["total"] == 6
+        for chest in ("Rare chest", "Buried chest", "Spirit poster chest", "Unknown type"):
             assert f"{chest} 1" in context["personal"]["types"]
+        assert "Chest 2" in context["personal"]["types"]
         win.reset_match_source()
         assert not win.dashboard.overlay_context()["replay_verified"]
         assert win.dashboard.total.text() == "0"
@@ -1236,3 +1237,15 @@ def test_stats_quality_filters_preserve_original_live_data_and_combine(app):
         assert page.trend_grouping.currentData() is True
         assert [match.snapshot for match in page.trend.visible_matches] == [snapshot]
         assert "1 matches" in page.summary.text()
+
+def test_verified_replay_counts_match_with_only_destroyed_chests(app):
+    gui, win, _ = app
+    assert win.save_current_match()
+    match, = gui.match_history.read_history(win.match_history_path())
+    timeline = [(i, "Chest", True) for i in range(24)]
+    win.apply_verified_replay((match, None, (None, None, 24, {}, 24, timeline, "Rin")))
+    saved, = gui.match_history.read_history(win.match_history_path())
+    assert saved.total == saved.certain == 24
+    assert saved.chest_types == {"chest": 24}
+    assert saved.token_chance == gui.token_odds_text(24, saved.boost)
+    assert gui.replay_comparison.saved_verified_chest_types(saved.replay) == {"chest": 24}
